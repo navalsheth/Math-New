@@ -1,24 +1,12 @@
 from flask import Flask, render_template_string, request, jsonify, Response
 import openai
+import re
+import base64
 import os
-from dotenv import load_dotenv
-
-# Load environment variables from .env file (for local development)
-load_dotenv()
-
-# Get API key from environment variable (Render will set this)
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.1")  # Default to gpt-4o if not set
-PORT = int(os.environ.get("PORT", 5002))  # Render sets PORT environment variable
-
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+MODEL = "gpt-5.1"
+PORT = 5002
 app = Flask(__name__)
-
-# Validate that API key exists on startup
-if not OPENAI_API_KEY:
-    print("⚠️ WARNING: OPENAI_API_KEY environment variable not set!")
-    print("   Set it on Render: Environment → Add Environment Variable")
-    print("   For local development, create a .env file with OPENAI_API_KEY=your_key_here")
-
 SYSTEM_PROMPT = """You are a PhD-Level Math Teacher analyzing student solutions with **zero tolerance for errors or omissions**.
 **STRICT RULES (MANDATORY):**
 1. **READ ALL QUESTION FILES COMPLETELY AND DO NOT MODIFY THEM** – Extract **EVERY** question and subpart (e.g., 1(i), 1(ii), 2(a), etc.), even if the student did not attempt them.
@@ -65,12 +53,11 @@ SYSTEM_PROMPT = """You are a PhD-Level Math Teacher analyzing student solutions 
 ---
 ### **NON-NEGOTIABLES**
 - **No skipped questions/subparts** – Analyze **everything**, even if not attempted.
-- **No added/removed steps** in student's work.
+- **No added/removed steps** in student’s work.
 - **No vague errors** – Only **math-specific** critiques.
 - **No "almost correct"** – Either ✓, a **precise error**, or "**Not attempted by student**".
 - **No handwaving** – Justify **every** correction step.
 **FAILURE TO FOLLOW = REJECT THE OUTPUT.**"""
-
 HTML = """<!DOCTYPE html>
 <html>
 <head>
@@ -340,44 +327,32 @@ HTML = """<!DOCTYPE html>
     </script>
 </body>
 </html>"""
-
 @app.route('/')
 def home():
     return render_template_string(HTML)
-
 @app.route('/check')
 def check():
     try:
-        if not OPENAI_API_KEY:
-            return jsonify({"status": "error", "message": "OPENAI_API_KEY not configured"})
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
         client.models.list()
-        return jsonify({"status": "ok", "model": MODEL})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
+        return jsonify({"status": "ok"})
+    except:
+        return jsonify({"status": "error"})
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        # Check if API key is configured
-        if not OPENAI_API_KEY:
-            return jsonify({"error": "OpenAI API key not configured. Please set OPENAI_API_KEY environment variable."}), 500
-        
         data = request.json
         qdata = data['questions']
         adata = data['answers']
-        
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
         content = []
         content.append({"type": "text", "text": "=== QUESTION FILES - LIST ALL QUESTIONS AND SUBPARTS FIRST, THEN ANALYZE EVERYTHING ===\n\n"})
-        
         for i, q in enumerate(qdata):
             if q['type'] == 'text':
                 content.append({"type": "text", "text": f"Question File {i + 1} ({q['name']}):\n{q['data']}\n\n"})
             else:
                 content.append({"type": "image_url", "image_url": {"url": f"data:{q['mime']};base64,{q['data']}"}})
                 content.append({"type": "text", "text": f"Question File {i + 1} ({q['name']}) shown above\n\n"})
-        
         content.append({"type": "text", "text": "=== STUDENT ANSWER FILES ===\n\n"})
         for i, a in enumerate(adata):
             if a['type'] == 'text':
@@ -385,16 +360,13 @@ def analyze():
             else:
                 content.append({"type": "image_url", "image_url": {"url": f"data:{a['mime']};base64,{a['data']}"}})
                 content.append({"type": "text", "text": f"Answer File {i + 1} ({a['name']}) shown above\n\n"})
-        
         content.append(
             {"type": "text", "text": "FIRST, LIST ALL QUESTIONS AND SUBPARTS FROM THE QUESTION FILES. THEN, ANALYZE EACH ONE. DO NOT SKIP ANY QUESTION, EVEN IF NOT ATTEMPTED BY THE STUDENT."}
         )
-        
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": content}
         ]
-        
         def generate():
             stream = client.chat.completions.create(
                 model=MODEL,
@@ -406,29 +378,16 @@ def analyze():
             for chunk in stream:
                 if chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
-        
         return Response(generate(), mimetype='text/plain')
-        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 if __name__ == '__main__':
     print("=" * 60)
     print("🎓 MATH ANALYSIS GPT")
     print("=" * 60)
     print(f"🚀 Server: http://localhost:{PORT}")
-    print(f"🤖 Using OpenAI model: {MODEL}")
-    if OPENAI_API_KEY:
-        print("✅ OpenAI API key: Configured")
-    else:
-        print("❌ OpenAI API key: NOT CONFIGURED")
-        print("   Set OPENAI_API_KEY environment variable")
     print("💡 Using KaTeX for fast math rendering")
     print("=" * 60)
-    
-    # Only open browser in local development, not on Render
-    if os.environ.get('RENDER') is None:  # Not running on Render
-        import webbrowser
-        webbrowser.open(f"http://localhost:{PORT}")
-    
+    import webbrowser
+    webbrowser.open(f"http://localhost:{PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
