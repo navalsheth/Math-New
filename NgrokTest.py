@@ -689,7 +689,6 @@ Rules:
     except Exception as e:
         return jsonify({'error': str(e)})
 
-
 if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🚀 Math OCR Analyzer Starting...")
@@ -700,7 +699,8 @@ if __name__ == '__main__':
     else:
         print("\n✅ OPENAI_API_KEY loaded from environment")
 
-    print("\n📱 Access the app at: http://localhost:5000")
+    port = int(os.environ.get("PORT", 5000))
+    print(f"\n📱 Access the app at: http://localhost:{port}")
     print("=" * 60 + "\n")
 
-    app.run(debug=True, port=5000)
+    app.run(host='0.0.0.0', port=port, debug=True)
