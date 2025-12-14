@@ -1,393 +1,706 @@
-from flask import Flask, render_template_string, request, jsonify, Response
-import openai
-import re
-import base64
+from flask import Flask, render_template_string, request, jsonify
 import os
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-MODEL = "gpt-4o"
-PORT = 5002
+import base64
+import json
+from openai import OpenAI
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
 app = Flask(__name__)
-SYSTEM_PROMPT = """You are a PhD-Level Math Teacher analyzing student solutions with **zero tolerance for errors or omissions**.
-**STRICT RULES (MANDATORY):**
-1. **READ ALL QUESTION FILES COMPLETELY AND DO NOT MODIFY THEM** – Extract **EVERY** question and subpart (e.g., 1(i), 1(ii), 2(a), etc.), even if the student did not attempt them.
-2. **LIST ALL QUESTIONS FIRST** – Before analyzing, list **every question** from the question files, including those not attempted by the student.
-3. **USE EXACT QUESTION NUMBERS** from the files (e.g., "Question 1(i)", "Question 3(ii)").
-4. **FOR UNATTTEMPTED QUESTIONS**, explicitly state: "**Not attempted by student**".
-5. **COPY STUDENT'S WORK STEP BY STEP AND DO NOT ADD ANYTHING EXTRA** – For attempted questions, do **NOT** rewrite, paraphrase, or "improve" their steps. Preserve **all** notation, even if incorrect.
-6. **ALL MATH IN LaTeX**: $x$, $\\tan u$, $\\int$, $\\frac{1}{2}$, $C_1$, etc.
----
-### **ERROR ANALYSIS FORMAT (ULTRA-SHORT, MATHEMATICAL ONLY)**
-- **Incorrect substitution**: Used $u^2$, must be $y$.
-- **Sign error**: Wrote $-\\cos u$, should be $+\\cos u$.
-- **Missing term**: Forgot $du$ in integral.
-- **Wrong identity**: Used $\\sin u = t$, should be $\\cos u = t$.
-- **Derivative mistake**: Got $2x$, correct is $x^2$.
-- **Logic flaw**: Assumed $f(x)$ is continuous without justification.
-**IF CORRECT**: "✓ Correct" (nothing else).
-**IF NOT ATTEMPTED**: "**Not attempted by student**"
----
-### **OUTPUT FORMAT (NO DEVIATION)**
-## **List of All Questions**
-- Question 1(i)
-- Question 1(ii)
-- Question 2(a)
-- ...
-## **Question [EXACT NUMBER FROM FILE]**
-**Full Question**: [Copy **exactly** as written, with LaTeX for math.]
-### **Student's Solution – Exact Copy**
-**Status**: Attempted / Not attempted by student
-**Step 1**: [Verbatim from student, **no changes**.]
-**Step 2**: [Verbatim from student, **no changes**.]
-...
-### **Error Analysis**
-**Step X**: [1-line error, e.g., "Incorrect limit: wrote $\\lim_{x \\to 0} \\sin x = 0$, missing $+1$."]
-**OR**
-**✓ Correct**
-**OR**
-**Not attempted by student**
-### **Corrected Solution (STEP-BY-STEP, NO SKIPPING)**
-1. [Your **first** step, with justification.]
-2. [Your **second** step, with justification.]
-...
-**Final Answer**: $\\boxed{...}$
----
-### **NON-NEGOTIABLES**
-- **No skipped questions/subparts** – Analyze **everything**, even if not attempted.
-- **No added/removed steps** in student’s work.
-- **No vague errors** – Only **math-specific** critiques.
-- **No "almost correct"** – Either ✓, a **precise error**, or "**Not attempted by student**".
-- **No handwaving** – Justify **every** correction step.
-**FAILURE TO FOLLOW = REJECT THE OUTPUT.**"""
-HTML = """<!DOCTYPE html>
-<html>
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Math Analysis</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Math OCR Analyzer</title>
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
+                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+            },
+            startup: {
+                pageReady: () => {
+                    return MathJax.startup.defaultPageReady();
+                }
+            }
+        };
+    </script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            min-height: 100vh;
-            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
         }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card {
+        .container {
+            width: 95%;
+            max-width: 1200px;
+            height: 95vh;
             background: white;
-            padding: 30px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
-        h1 { color: #667eea; margin-bottom: 10px; font-size: 28px; }
-        .upload-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin: 20px 0;
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .upload-box {
-            border: 2px dashed #667eea;
-            padding: 30px;
-            text-align: center;
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
             border-radius: 8px;
             cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
             transition: all 0.3s;
         }
-        .upload-box:hover { background: #f8f9ff; }
-        .upload-box.active { background: #e8f5e9; border-color: #4caf50; }
-        input[type="file"] { display: none; }
-        .btn {
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            border: none;
-            padding: 15px 40px;
-            border-radius: 8px;
-            font-size: 18px;
-            cursor: pointer;
-            width: 100%;
-            font-weight: bold;
-            transition: transform 0.2s;
-        }
-        .btn:disabled { background: #ccc; cursor: not-allowed; }
-        .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4); }
-        .results {
+        .btn-questions {
             background: white;
-            padding: 30px;
-            border-radius: 10px;
-            min-height: 400px;
-            max-height: 600px;
-            overflow-y: auto;
+            color: #667eea;
         }
-        .status { text-align: center; color: #666; padding: 10px; font-size: 14px; }
-        .status.success { color: #4caf50; font-weight: bold; }
-        .error {
-            background: #ffebee;
-            color: #c62828;
+        .btn-questions:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .btn-answers {
+            background: #fbbf24;
+            color: #78350f;
+        }
+        .btn-answers:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(251,191,36,0.4); }
+        .chat-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+            background: #f8fafc;
+        }
+        .message {
+            margin-bottom: 20px;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.system {
+            background: #e0e7ff;
+            padding: 15px 20px;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        .message.user {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .question-block {
+            background: white;
+            padding: 25px;
+            margin: 20px 0;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border-left: 5px solid #667eea;
+        }
+        .question-number {
+            color: #667eea;
+            font-weight: 700;
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+        .question-text {
+            color: #1e293b;
+            font-size: 16px;
+            margin-bottom: 15px;
+            line-height: 1.8;
+        }
+        .section-title {
+            color: #64748b;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin: 15px 0 10px 0;
+            letter-spacing: 0.5px;
+        }
+        .student-solution {
+            background: #fef3c7;
             padding: 15px;
             border-radius: 8px;
-            margin: 10px 0;
-            border-left: 4px solid #c62828;
-        }
-        #output h2 {
-            color: #764ba2;
-            margin-top: 25px;
             margin-bottom: 15px;
-            border-bottom: 2px solid #667eea;
-            padding-bottom: 8px;
-            font-size: 24px;
+            white-space: pre-wrap;
+            line-height: 2;
         }
-        #output h3 {
-            color: #667eea;
-            margin-top: 20px;
-            margin-bottom: 10px;
-            font-size: 18px;
+        .solution-step {
+            padding: 10px;
+            line-height: 2.2;
+            border-bottom: 1px solid #fde68a;
+            font-size: 15px;
         }
-        #output strong {
-            color: #764ba2;
-            font-weight: 600;
+        .solution-step:last-child { border-bottom: none; }
+        .error-analysis {
+            background: #fee2e2;
+            padding: 15px;
+            border-radius: 8px;
+            color: #991b1b;
+            margin-bottom: 15px;
+            font-weight: 500;
+            line-height: 1.8;
         }
-        #output hr {
+        .correct-solution {
+            background: #d1fae5;
+            padding: 15px;
+            border-radius: 8px;
+            line-height: 2.2;
+            font-size: 15px;
+        }
+        .practice-paper {
+            background: #ede9fe;
+            padding: 25px;
             margin: 30px 0;
-            border: none;
-            border-top: 2px solid #e0e0e0;
+            border-radius: 12px;
+            border-left: 5px solid #7c3aed;
         }
-        #output p {
+        .practice-title {
+            color: #7c3aed;
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 20px;
+        }
+        .file-upload {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
             margin: 10px 0;
-            line-height: 1.6;
         }
-        .katex { font-size: 1.1em; }
-        .katex-display { margin: 1em 0; }
+        .file-tag {
+            background: #667eea;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .file-tag .remove { cursor: pointer; font-weight: bold; }
+        .input-area {
+            padding: 20px 30px;
+            background: white;
+            border-top: 2px solid #e2e8f0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .input-wrapper {
+            flex: 1;
+            display: flex;
+            gap: 10px;
+        }
+        input[type="file"] { display: none; }
+        .upload-btn {
+            background: #f1f5f9;
+            color: #475569;
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            border: 2px solid #e2e8f0;
+        }
+        .upload-btn:hover { background: #e2e8f0; }
+        .start-btn {
+            background: #10b981;
+            color: white;
+            padding: 12px 30px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        .start-btn:hover { background: #059669; }
+        .start-btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f4f6;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .confirm-prompt {
+            background: #fef3c7;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            border-left: 5px solid #f59e0b;
+        }
+        .confirm-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn-yes {
+            background: #10b981;
+            color: white;
+        }
+        .btn-yes:hover { background: #059669; }
+        .btn-no {
+            background: #ef4444;
+            color: white;
+        }
+        .btn-no:hover { background: #dc2626; }
+
+        /* Math rendering styles */
+        .MathJax {
+            font-size: 1.1em !important;
+        }
+        mjx-container {
+            display: inline-block;
+            margin: 0 2px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="card">
-            <h1>🎓 Math Analysis GPT</h1>
-            <p style="color: #666;">Upload question and answer files for detailed analysis with proper math rendering</p>
-            <div class="upload-grid">
-                <div class="upload-box" id="qbox">
-                    <div style="font-size: 40px">📝</div>
-                    <strong>Question File(s)</strong>
-                    <p style="font-size: 12px; color: #999; margin-top: 10px">Click to upload (multiple OK)</p>
-                    <p id="qname" style="font-size: 12px; color: #666; margin-top: 5px"></p>
-                    <input type="file" id="qfile" accept="image/*,.txt,.pdf" multiple>
-                </div>
-                <div class="upload-box" id="abox">
-                    <div style="font-size: 40px">✍️</div>
-                    <strong>Answer File(s)</strong>
-                    <p style="font-size: 12px; color: #999; margin-top: 10px">Click to upload (multiple OK)</p>
-                    <p id="aname" style="font-size: 12px; color: #666; margin-top: 5px"></p>
-                    <input type="file" id="afile" accept="image/*,.txt,.pdf" multiple>
-                </div>
+        <div class="header">
+            <h1>📐 Math OCR Analyzer</h1>
+            <div class="header-buttons">
+                <button class="btn btn-questions" onclick="showQuestions()">Questions</button>
+                <button class="btn btn-answers" onclick="showAnswers()">Answers</button>
             </div>
-            <button class="btn" id="analyzebtn" disabled>🔍 Start Analysis</button>
         </div>
-        <div class="results">
-            <h2 style="color: #667eea">📊 Analysis Results</h2>
-            <div class="status" id="status">Ready to analyze</div>
-            <div id="output"></div>
+        <div class="chat-area" id="chatArea">
+            <div class="message system">
+                <strong>Welcome to Math OCR Analyzer!</strong><br>
+                Upload your question and answer files, then click "Start Analysis" to begin.
+            </div>
+        </div>
+        <div class="input-area">
+            <div class="input-wrapper">
+                <label class="upload-btn">
+                    📎 Upload Files
+                    <input type="file" id="fileInput" multiple accept="image/*,.pdf">
+                </label>
+                <button class="btn start-btn" id="startBtn" onclick="startAnalysis()" disabled>
+                    Start Analysis
+                </button>
+            </div>
         </div>
     </div>
+
     <script>
-        var qfiles = [];
-        var afiles = [];
-        document.getElementById('qbox').onclick = function() {
-            document.getElementById('qfile').click();
-        };
-        document.getElementById('abox').onclick = function() {
-            document.getElementById('afile').click();
-        };
-        document.getElementById('qfile').onchange = function(e) {
-            qfiles = Array.from(e.target.files);
-            document.getElementById('qbox').classList.add('active');
-            var names = qfiles.map(function(f) { return f.name; }).join(', ');
-            document.getElementById('qname').textContent = qfiles.length + ' file(s): ' + names;
-            checkFiles();
-        };
-        document.getElementById('afile').onchange = function(e) {
-            afiles = Array.from(e.target.files);
-            document.getElementById('abox').classList.add('active');
-            var names = afiles.map(function(f) { return f.name; }).join(', ');
-            document.getElementById('aname').textContent = afiles.length + ' file(s): ' + names;
-            checkFiles();
-        };
-        function checkFiles() {
-            if (qfiles.length > 0 && afiles.length > 0) {
-                document.getElementById('analyzebtn').disabled = false;
-            }
-        }
-        document.getElementById('analyzebtn').onclick = function() {
-            analyze();
-        };
-        function readFile(file) {
-            return new Promise(function(resolve, reject) {
-                var reader = new FileReader();
-                if (file.type.startsWith('image')) {
-                    reader.onload = function(e) {
-                        resolve({
-                            type: 'image',
-                            data: e.target.result.split(',')[1],
-                            mime: file.type,
-                            name: file.name
-                        });
-                    };
-                    reader.readAsDataURL(file);
-                } else {
-                    reader.onload = function(e) {
-                        resolve({
-                            type: 'text',
-                            data: e.target.result,
-                            name: file.name
-                        });
-                    };
-                    reader.readAsText(file);
+        let uploadedFiles = [];
+        let currentView = 'questions';
+        let analysisResult = null;
+
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = Array.from(e.target.files);
+            files.forEach(file => {
+                if (!uploadedFiles.find(f => f.name === file.name)) {
+                    uploadedFiles.push(file);
                 }
-                reader.onerror = reject;
             });
+            updateFileDisplay();
+            document.getElementById('startBtn').disabled = uploadedFiles.length === 0;
+            e.target.value = '';
+        });
+
+        function updateFileDisplay() {
+            const chatArea = document.getElementById('chatArea');
+            const existingFileMsg = document.getElementById('fileMessage');
+            if (existingFileMsg) existingFileMsg.remove();
+
+            if (uploadedFiles.length > 0) {
+                const fileMsg = document.createElement('div');
+                fileMsg.id = 'fileMessage';
+                fileMsg.className = 'message user';
+                fileMsg.innerHTML = '<strong>Uploaded Files:</strong><div class="file-upload">' +
+                    uploadedFiles.map((f, i) => `
+                        <div class="file-tag">
+                            ${f.name}
+                            <span class="remove" onclick="removeFile(${i})">✕</span>
+                        </div>
+                    `).join('') + '</div>';
+                chatArea.appendChild(fileMsg);
+                chatArea.scrollTop = chatArea.scrollHeight;
+            }
         }
-        function md2html(text) {
-            text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-            text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-            text = text.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
-            text = text.replace(/^---$/gm, '<hr>');
-            text = text.replace(/\\n/g, '<br>');
-            return text;
+
+        function removeFile(index) {
+            uploadedFiles.splice(index, 1);
+            updateFileDisplay();
+            document.getElementById('startBtn').disabled = uploadedFiles.length === 0;
         }
-        function renderMath(element) {
+
+        function renderMath() {
+            if (window.MathJax && window.MathJax.typesetPromise) {
+                window.MathJax.typesetPromise().catch((err) => console.log('MathJax render error:', err));
+            } else if (window.MathJax && window.MathJax.Hub) {
+                window.MathJax.Hub.Queue(["Typeset", window.MathJax.Hub]);
+            }
+        }
+
+        async function startAnalysis() {
+            if (uploadedFiles.length === 0) return;
+
+            const chatArea = document.getElementById('chatArea');
+            const loadingMsg = document.createElement('div');
+            loadingMsg.className = 'message system';
+            loadingMsg.innerHTML = '<div class="loading"></div> Analyzing your files...';
+            chatArea.appendChild(loadingMsg);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            document.getElementById('startBtn').disabled = true;
+
+            const formData = new FormData();
+            uploadedFiles.forEach(file => formData.append('files', file));
+            formData.append('view', currentView);
+
             try {
-                renderMathInElement(element, {
-                    delimiters: [
-                        {left: "$$", right: "$$", display: true},
-                        {left: "$", right: "$", display: false},
-                        {left: "\\(", right: "\\)", display: false},
-                        {left: "\\[", right: "\\]", display: true}
-                    ],
-                    throwOnError: false,
-                    strict: false
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
                 });
-            } catch (e) {
-                console.log('KaTeX render error:', e);
+
+                const result = await response.json();
+                loadingMsg.remove();
+
+                if (result.error) {
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'message system';
+                    errorMsg.innerHTML = `<strong>Error:</strong> ${result.error}`;
+                    chatArea.appendChild(errorMsg);
+                } else {
+                    analysisResult = result;
+                    displayAnalysis(result);
+                }
+            } catch (error) {
+                loadingMsg.remove();
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'message system';
+                errorMsg.innerHTML = `<strong>Error:</strong> ${error.message}`;
+                chatArea.appendChild(errorMsg);
             }
+
+            chatArea.scrollTop = chatArea.scrollHeight;
+            document.getElementById('startBtn').disabled = false;
         }
-        async function analyze() {
-            if (qfiles.length === 0 || afiles.length === 0) {
-                alert('Please upload both question and answer files');
-                return;
-            }
-            var btn = document.getElementById('analyzebtn');
-            var output = document.getElementById('output');
-            var status = document.getElementById('status');
-            btn.disabled = true;
-            output.innerHTML = '';
-            status.textContent = 'Reading files...';
-            status.className = 'status';
+
+        function displayAnalysis(result) {
+            const chatArea = document.getElementById('chatArea');
+
+            result.questions.forEach(q => {
+                const qBlock = document.createElement('div');
+                qBlock.className = 'question-block';
+                qBlock.innerHTML = `
+                    <div class="question-number">Question ${q.number}</div>
+                    <div class="question-text">${q.question}</div>
+
+                    <div class="section-title">Student's Solution (Original)</div>
+                    <div class="student-solution">${q.student_original}</div>
+
+                    <div class="section-title">Error Analysis</div>
+                    <div class="error-analysis">${q.error}</div>
+
+                    <div class="section-title">Correct Solution</div>
+                    <div class="correct-solution">${q.correct_solution}</div>
+                `;
+                chatArea.appendChild(qBlock);
+            });
+
+            const confirmMsg = document.createElement('div');
+            confirmMsg.className = 'confirm-prompt';
+            confirmMsg.innerHTML = `
+                <strong>Analysis Complete!</strong><br>
+                Would you like to generate a practice paper for the questions with mistakes?
+                <div class="confirm-buttons">
+                    <button class="btn btn-yes" onclick="generatePractice()">Yes, Generate</button>
+                    <button class="btn btn-no" onclick="skipPractice()">No, Thanks</button>
+                </div>
+            `;
+            chatArea.appendChild(confirmMsg);
+            chatArea.scrollTop = chatArea.scrollHeight;
+
+            // Render all math
+            setTimeout(renderMath, 100);
+        }
+
+        async function generatePractice() {
+            const chatArea = document.getElementById('chatArea');
+            const confirmPrompt = document.querySelector('.confirm-prompt');
+            if (confirmPrompt) confirmPrompt.remove();
+
+            const loadingMsg = document.createElement('div');
+            loadingMsg.className = 'message system';
+            loadingMsg.innerHTML = '<div class="loading"></div> Generating practice paper...';
+            chatArea.appendChild(loadingMsg);
+
             try {
-                var qdata = await Promise.all(qfiles.map(function(f) { return readFile(f); }));
-                var adata = await Promise.all(afiles.map(function(f) { return readFile(f); }));
-                status.textContent = 'Analyzing with AI...';
-                var response = await fetch('/analyze', {
+                const response = await fetch('/generate_practice', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ questions: qdata, answers: adata })
+                    body: JSON.stringify({ analysis: analysisResult })
                 });
-                if (!response.ok) throw new Error('Failed: ' + response.status);
-                var reader = response.body.getReader();
-                var decoder = new TextDecoder();
-                var buffer = '';
-                var lastRenderTime = Date.now();
-                while (true) {
-                    var result = await reader.read();
-                    if (result.done) break;
-                    buffer += decoder.decode(result.value);
-                    output.innerHTML = md2html(buffer);
-                    var now = Date.now();
-                    if (now - lastRenderTime > 200) {
-                        renderMath(output);
-                        lastRenderTime = now;
-                    }
-                    output.parentElement.scrollTop = output.parentElement.scrollHeight;
+
+                const result = await response.json();
+                loadingMsg.remove();
+
+                if (result.practice_questions && result.practice_questions.length > 0) {
+                    const practiceBlock = document.createElement('div');
+                    practiceBlock.className = 'practice-paper';
+                    practiceBlock.innerHTML = `
+                        <div class="practice-title">📝 Practice Paper</div>
+                        ${result.practice_questions.map(pq => `
+                            <div class="question-block">
+                                <div class="question-number">Question ${pq.number}</div>
+                                <div class="question-text">${pq.question}</div>
+                            </div>
+                        `).join('')}
+                    `;
+                    chatArea.appendChild(practiceBlock);
+
+                    // Render math in practice questions
+                    setTimeout(renderMath, 100);
+                } else {
+                    const noMistakes = document.createElement('div');
+                    noMistakes.className = 'message system';
+                    noMistakes.innerHTML = '<strong>Great job!</strong> No mistakes found, so no practice paper needed.';
+                    chatArea.appendChild(noMistakes);
                 }
-                output.innerHTML = md2html(buffer);
-                renderMath(output);
-                status.textContent = 'Analysis complete! ✓';
-                status.className = 'status success';
+
+                chatArea.scrollTop = chatArea.scrollHeight;
             } catch (error) {
-                output.innerHTML = '<div class="error"><strong>Error:</strong> ' + error.message + '</div>';
-                status.textContent = 'Analysis failed';
-                status.className = 'status';
-                status.style.color = '#c62828';
-            } finally {
-                btn.disabled = false;
+                loadingMsg.remove();
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'message system';
+                errorMsg.innerHTML = `<strong>Error:</strong> ${error.message}`;
+                chatArea.appendChild(errorMsg);
             }
+        }
+
+        function skipPractice() {
+            const confirmPrompt = document.querySelector('.confirm-prompt');
+            if (confirmPrompt) confirmPrompt.remove();
+        }
+
+        function showQuestions() {
+            currentView = 'questions';
+            document.querySelector('.btn-questions').style.opacity = '1';
+            document.querySelector('.btn-answers').style.opacity = '0.7';
+        }
+
+        function showAnswers() {
+            currentView = 'answers';
+            document.querySelector('.btn-answers').style.opacity = '1';
+            document.querySelector('.btn-questions').style.opacity = '0.7';
         }
     </script>
 </body>
-</html>"""
+</html>
+'''
+
+
 @app.route('/')
-def home():
-    return render_template_string(HTML)
-@app.route('/check')
-def check():
-    try:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        client.models.list()
-        return jsonify({"status": "ok"})
-    except:
-        return jsonify({"status": "error"})
+def index():
+    return render_template_string(HTML_TEMPLATE)
+
+
+
+
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        data = request.json
-        qdata = data['questions']
-        adata = data['answers']
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        content = []
-        content.append({"type": "text", "text": "=== QUESTION FILES - LIST ALL QUESTIONS AND SUBPARTS FIRST, THEN ANALYZE EVERYTHING ===\n\n"})
-        for i, q in enumerate(qdata):
-            if q['type'] == 'text':
-                content.append({"type": "text", "text": f"Question File {i + 1} ({q['name']}):\n{q['data']}\n\n"})
-            else:
-                content.append({"type": "image_url", "image_url": {"url": f"data:{q['mime']};base64,{q['data']}"}})
-                content.append({"type": "text", "text": f"Question File {i + 1} ({q['name']}) shown above\n\n"})
-        content.append({"type": "text", "text": "=== STUDENT ANSWER FILES ===\n\n"})
-        for i, a in enumerate(adata):
-            if a['type'] == 'text':
-                content.append({"type": "text", "text": f"Answer File {i + 1} ({a['name']}):\n{a['data']}\n\n"})
-            else:
-                content.append({"type": "image_url", "image_url": {"url": f"data:{a['mime']};base64,{a['data']}"}})
-                content.append({"type": "text", "text": f"Answer File {i + 1} ({a['name']}) shown above\n\n"})
-        content.append(
-            {"type": "text", "text": "FIRST, LIST ALL QUESTIONS AND SUBPARTS FROM THE QUESTION FILES. THEN, ANALYZE EACH ONE. DO NOT SKIP ANY QUESTION, EVEN IF NOT ATTEMPTED BY THE STUDENT."}
+       api_key = OPENAI_API_KEY
+       if not api_key or api_key == 'your-api-key-here':
+           return jsonify(
+               {'error': 'Please set your OpenAI API key in the OPENAI_API_KEY variable at the top of the script.'})
+
+ 
+
+       
+        
+        files = request.files.getlist('files')
+        view = request.form.get('view', 'questions')
+
+        if not files:
+            return jsonify({'error': 'No files uploaded'})
+
+        client = OpenAI(api_key=api_key)
+
+        # Process files
+        file_contents = []
+        for file in files:
+            if file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                encoded = base64.b64encode(file.read()).decode('utf-8')
+                file_contents.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}
+                })
+            elif file.filename.lower().endswith('.pdf'):
+                file_contents.append({
+                    "type": "text",
+                    "text": f"[PDF file: {file.filename} - Content extraction not implemented in this demo]"
+                })
+
+        # Analyze with OpenAI
+        prompt = f"""Extract and analyze math problems from the uploaded {"questions" if view == "questions" else "answers"}.
+
+CRITICAL FORMATTING RULES:
+1. Format EVERY mathematical expression using LaTeX with $ for inline math and $ for display math
+2. For student_original: Extract what the student wrote BUT format ALL math expressions with $LaTeX$ notation
+3. All fields must use proper LaTeX formatting for all mathematical content
+
+Return a JSON array with this exact structure:
+[{{
+  "number": "1",
+  "question": "question text with $LaTeX$ formatting",
+  "student_original": "Student's work with ALL math wrapped in $LaTeX$ - transcribe their work but ensure every mathematical expression is in LaTeX",
+  "error": "one-line error description with $LaTeX$ if needed, or 'No error - solution is correct'",
+  "correct_solution": "Complete step-by-step solution with $LaTeX$ formatting. Each step on a new line separated by <br>"
+}}]
+
+LaTeX Examples:
+- Fractions: $\\frac{{a}}{{b}}$ or $\\dfrac{{a}}{{b}}$ for display style
+- Integrals: $\\int f(x)\\,dx$ or $\\displaystyle\\int f(x)\\,dx$
+- Square roots: $\\sqrt{{x}}$ or $\\sqrt[n]{{x}}$
+- Exponents: $x^2$ or $x^{{2n}}$
+- Trigonometry: $\\sin x$, $\\cos x$, $\\tan x$, $\\sec x$, etc.
+- Greek letters: $\\pi$, $\\theta$, $\\alpha$
+- Inverse trig: $\\sin^{{-1}} x$ or $\\arcsin x$ or $\\cos^{{-1}} x$
+- Log: $\\log x$ or $\\ln x$
+- Limits: $\\lim_{{x\\to 0}}$
+- Subscripts: $x_1$ or $C_1$
+
+Rules:
+- student_original must be VERBATIM - exactly what student wrote
+- All other text should have proper LaTeX formatting for math
+- Flag only real mathematical errors
+- In correct_solution, use <br> between steps
+- Each step should be a complete explanation"""
+
+        response = client.chat.completions.create(
+            model="gpt-5.1",
+            messages=[{
+                "role": "user",
+                "content": [{"type": "text", "text": prompt}] + file_contents
+            }],
+            max_completion_tokens=9000,
+            temperature=0.3
         )
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": content}
-        ]
-        def generate():
-            stream = client.chat.completions.create(
-                model=MODEL,
-                messages=messages,
-                temperature=0.3,
-                max_completion_tokens=7000,
-                stream=True
-            )
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-        return Response(generate(), mimetype='text/plain')
+
+        result_text = response.choices[0].message.content.strip()
+
+        # Parse JSON
+        if result_text.startswith('```json'):
+            result_text = result_text[7:]
+        if result_text.endswith('```'):
+            result_text = result_text[:-3]
+        result_text = result_text.strip()
+
+        questions = json.loads(result_text)
+
+        return jsonify({'questions': questions})
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)})
+
+
+@app.route('/generate_practice', methods=['POST'])
+def generate_practice():
+    try:
+        api_key = OPENAI_API_KEY
+        if not api_key or api_key == 'your-api-key-here':
+            return jsonify(
+                {'error': 'Please set your OpenAI API key in the OPENAI_API_KEY variable at the top of the script.'})
+
+
+        data = request.json
+        analysis = data.get('analysis', {})
+        questions = analysis.get('questions', [])
+
+        # Filter questions with real errors
+        error_questions = [q for q in questions if 'no error' not in q.get('error', '').lower()]
+
+        if not error_questions:
+            return jsonify({'practice_questions': []})
+
+        client = OpenAI(api_key=api_key)
+
+        prompt = f"""Generate practice questions for these problems where students made mistakes:
+
+{json.dumps(error_questions, indent=2)}
+
+Return a JSON array with this structure:
+[{{"number": "original_number", "question": "modified question with $LaTeX$ formatting targeting the same concept"}}]
+
+Rules:
+- Use the SAME question numbers as originals
+- Create DIFFERENT but similar questions
+- Target the specific error made
+- Format ALL math using LaTeX: $x^2$, $\\frac{{a}}{{b}}$, $\\int$, etc.
+- Use $ for inline math and $$ for display equations"""
+
+        response = client.chat.completions.create(
+            model="gpt-5.1",
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=2000,
+            temperature=0.7
+        )
+
+        result_text = response.choices[0].message.content.strip()
+
+        if result_text.startswith('```json'):
+            result_text = result_text[7:]
+        if result_text.endswith('```'):
+            result_text = result_text[:-3]
+        result_text = result_text.strip()
+
+        practice_questions = json.loads(result_text)
+
+        return jsonify({'practice_questions': practice_questions})
+
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+
 if __name__ == '__main__':
+    print("\n" + "=" * 60)
+    print("🚀 Math OCR Analyzer Starting...")
     print("=" * 60)
-    print("🎓 MATH ANALYSIS GPT")
-    print("=" * 60)
-    print(f"🚀 Server: http://localhost:{PORT}")
-    print("💡 Using KaTeX for fast math rendering")
-    print("=" * 60)
-    import webbrowser
-    webbrowser.open(f"http://localhost:{PORT}")
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    if OPENAI_API_KEY == 'your-api-key-here':
+        print("\n⚠️  WARNING: Please set your OpenAI API key!")
+        print("   Edit the OPENAI_API_KEY variable at the top of this file.\n")
+    else:
+        print("\n✅ API Key configured")
+    print("\n📱 Access the app at: http://localhost:5000")
+    print("=" * 60 + "\n")
+    app.run(debug=True, port=5000)
