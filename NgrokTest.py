@@ -539,15 +539,12 @@ def index():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-       api_key = OPENAI_API_KEY
-       if not api_key or api_key == 'your-api-key-here':
-           return jsonify(
-               {'error': 'Please set your OpenAI API key in the OPENAI_API_KEY variable at the top of the script.'})
+        api_key = OPENAI_API_KEY
+        if not api_key:
+            return jsonify({
+                'error': 'OPENAI_API_KEY environment variable is not set.'
+            })
 
- 
-
-       
-        
         files = request.files.getlist('files')
         view = request.form.get('view', 'questions')
 
@@ -638,9 +635,10 @@ Rules:
 def generate_practice():
     try:
         api_key = OPENAI_API_KEY
-        if not api_key or api_key == 'your-api-key-here':
-            return jsonify(
-                {'error': 'Please set your OpenAI API key in the OPENAI_API_KEY variable at the top of the script.'})
+        if not api_key:
+            return jsonify({
+                'error': 'OPENAI_API_KEY environment variable is not set.'
+            })
 
 
         data = request.json
@@ -696,11 +694,13 @@ if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🚀 Math OCR Analyzer Starting...")
     print("=" * 60)
-    if OPENAI_API_KEY == 'your-api-key-here':
-        print("\n⚠️  WARNING: Please set your OpenAI API key!")
-        print("   Edit the OPENAI_API_KEY variable at the top of this file.\n")
+
+    if not OPENAI_API_KEY:
+        print("\n⚠️  WARNING: OPENAI_API_KEY environment variable is not set!\n")
     else:
-        print("\n✅ API Key configured")
+        print("\n✅ OPENAI_API_KEY loaded from environment")
+
     print("\n📱 Access the app at: http://localhost:5000")
     print("=" * 60 + "\n")
+
     app.run(debug=True, port=5000)
