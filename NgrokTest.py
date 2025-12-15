@@ -582,7 +582,6 @@ HTML_TEMPLATE = '''
         async function downloadPracticePDF() {
             if (!practiceBlock) return;
 
-            // Ensure all MathJax is rendered
             await MathJax.typesetPromise([practiceBlock]);
 
             const { jsPDF } = window.jspdf;
@@ -680,13 +679,15 @@ CRITICAL FORMATTING RULES:
 - correct_solution: Step-by-step with <br> between steps.
 
 Return JSON array:
-[{
-  "number": "EXACT original number string",
-  "question": "question with LaTeX",
-  "student_original": "student work with LaTeX",
-  "error": "...",
-  "correct_solution": "..."
-}]
+[
+  {{
+    "number": "EXACT original number string",
+    "question": "question with LaTeX",
+    "student_original": "student work with LaTeX",
+    "error": "...",
+    "correct_solution": "..."
+  }}
+]
 """
 
         response = client.chat.completions.create(
@@ -725,7 +726,9 @@ def generate_practice():
 {json.dumps(error_questions, indent=2)}
 
 Return JSON array:
-[{"number": "USE THE EXACT SAME ORIGINAL NUMBER STRING", "question": "new similar question with full LaTeX formatting"}]
+[
+  {{"number": "USE THE EXACT SAME ORIGINAL NUMBER STRING", "question": "new similar question with full LaTeX formatting"}}
+]
 
 Rules:
 - Preserve exact original number format.
