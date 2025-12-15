@@ -3,18 +3,16 @@ import os
 import base64
 import json
 from openai import OpenAI
-from flask_cors import CORS
-import os
-
-for k in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]:
-    os.environ.pop(k, None)
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 app = Flask(__name__)
-CORS(app)
-
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+
+# ============ NGROK FIX ============
+# This allows ngrok to work properly
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+# ===================================
 
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -540,7 +538,8 @@ def index():
     return render_template_string(HTML_TEMPLATE)
 
 
-
+# Set your OpenAI API key here
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 
 @app.route('/analyze', methods=['POST'])
@@ -548,9 +547,8 @@ def analyze():
     try:
         api_key = OPENAI_API_KEY
         if not api_key:
-            return jsonify({
-                'error': 'OPENAI_API_KEY environment variable is not set.'
-            })
+            return jsonify(
+                {'error': 'OpenAI API key not configured. Please set the OPENAI_API_KEY environment variable.'})
 
         files = request.files.getlist('files')
         view = request.form.get('view', 'questions')
@@ -579,7 +577,7 @@ def analyze():
         prompt = f"""Extract and analyze math problems from the uploaded {"questions" if view == "questions" else "answers"}.
 
 CRITICAL FORMATTING RULES:
-1. Format EVERY mathematical expression using LaTeX with $ for inline math and $ for display math
+1. Format EVERY mathematical expression using LaTeX with $ for inline math and $$ for display math
 2. For student_original: Extract what the student wrote BUT format ALL math expressions with $LaTeX$ notation
 3. All fields must use proper LaTeX formatting for all mathematical content
 
@@ -643,11 +641,8 @@ def generate_practice():
     try:
         api_key = OPENAI_API_KEY
         if not api_key:
-            return jsonify({
-                'error': 'OPENAI_API_KEY environment variable is not set.'
-            })
-
-
+            return jsonify(
+                {'error': 'OpenAI API key not configured. Please set the OPENAI_API_KEY environment variable.'})
         data = request.json
         analysis = data.get('analysis', {})
         questions = analysis.get('questions', [])
@@ -696,18 +691,19 @@ Rules:
     except Exception as e:
         return jsonify({'error': str(e)})
 
+
 if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🚀 Math OCR Analyzer Starting...")
     print("=" * 60)
-
     if not OPENAI_API_KEY:
-        print("\n⚠️  WARNING: OPENAI_API_KEY environment variable is not set!\n")
+        print("\n⚠️  WARNING: OpenAI API key not found!")
+        print("   Please set the OPENAI_API_KEY environment variable.\n")
     else:
-        print("\n✅ OPENAI_API_KEY loaded from environment")
-
-    port = int(os.environ.get("PORT", 5000))
-    print(f"\n📱 Access the app at: http://localhost:{port}")
+        print("\n✅ API Key configured")
+    print("\n📱 Access the app at: http://localhost:5000")
+    print("📱 ngrok URL will also work once you run ngrok!")
     print("=" * 60 + "\n")
 
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Run with host='0.0.0.0' to accept external connections
+    app.run(debug=False, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
