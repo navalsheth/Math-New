@@ -6,7 +6,6 @@ from openai import OpenAI
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024 # 50MB max file size
 # ============ NGROK FIX ============
-# This allows ngrok to work properly
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 # ===================================
@@ -168,13 +167,6 @@ HTML_TEMPLATE = '''
             white-space: pre-wrap;
             line-height: 2;
         }
-        .solution-step {
-            padding: 10px;
-            line-height: 2.2;
-            border-bottom: 1px solid #fde68a;
-            font-size: 15px;
-        }
-        .solution-step:last-child { border-bottom: none; }
         .error-analysis {
             background: #fee2e2;
             padding: 15px;
@@ -305,7 +297,6 @@ HTML_TEMPLATE = '''
             color: white;
         }
         .btn-no:hover { background: #dc2626; }
-        /* Math rendering styles */
         .MathJax {
             font-size: 1.1em !important;
         }
@@ -381,38 +372,24 @@ HTML_TEMPLATE = '''
             updateFileDisplay();
             document.getElementById('startBtn').disabled = uploadedFiles.length === 0;
         }
-        function renderMath(element) {
+        function renderMath(element = document) {
             if (window.MathJax && window.MathJax.typesetPromise) {
                 window.MathJax.typesetPromise([element]).catch((err) => console.log('MathJax render error:', err));
-            } else if (window.MathJax && window.MathJax.Hub) {
-                window.MathJax.Hub.Queue(["Typeset", window.MathJax.Hub, element]);
             }
         }
-        function typeWriter(element, htmlContent, speed = 5, callback) {
+        function typeWriter(element, text, speed = 10, callback) {
             let i = 0;
-            element.textContent = '';
+            element.innerHTML = '';
             const interval = setInterval(() => {
-                element.textContent += htmlContent.charAt(i);
-                i++;
-                if (i >= htmlContent.length) {
+                if (i < text.length) {
+                    element.innerHTML += text.charAt(i);
+                    i++;
+                } else {
                     clearInterval(interval);
-                    element.innerHTML = element.textContent;
                     renderMath(element);
                     if (callback) callback();
                 }
             }, speed);
-        }
-        function typeSectionsSequentially(panel, sections) {
-            let index = 0;
-            function typeNext() {
-                if (index < sections.length) {
-                    const { el, content } = sections[index];
-                    panel.appendChild(el);
-                    typeWriter(el, content, 5, typeNext);
-                    index++;
-                }
-            }
-            typeNext();
         }
         async function startAnalysis() {
             if (uploadedFiles.length === 0) return;
@@ -454,67 +431,56 @@ HTML_TEMPLATE = '''
         }
         function displayAnalysis(result) {
             const chatArea = document.getElementById('chatArea');
-            result.questions.forEach((q, idx) => {
+            result.questions.forEach(q => {
                 const accordion = document.createElement('button');
                 accordion.className = 'accordion';
                 accordion.textContent = `Question ${q.number}`;
-                accordion.dataset.questionIndex = idx;
                 const panel = document.createElement('div');
                 panel.className = 'panel';
+
                 chatArea.appendChild(accordion);
                 chatArea.appendChild(panel);
-            });
-            // Add event listeners for accordions
-            document.querySelectorAll('.accordion').forEach(acc => {
-                acc.addEventListener('click', function() {
+
+                accordion.addEventListener('click', function() {
                     this.classList.toggle('active');
-                    const panel = this.nextElementSibling;
                     if (panel.style.display === 'block') {
                         panel.style.display = 'none';
                     } else {
                         panel.style.display = 'block';
-                        if (!panel.hasChildNodes()) {
-                            const idx = this.dataset.questionIndex;
-                            const q = analysisResult.questions[idx];
-                            const questionTextDiv = document.createElement('div');
-                            questionTextDiv.className = 'question-text';
+                        if (panel.innerHTML === '') {
+                            const questionDiv = document.createElement('div');
+                            questionDiv.className = 'question-text';
+
                             const studentTitle = document.createElement('div');
                             studentTitle.className = 'section-title';
                             studentTitle.textContent = "Student's Solution (Original)";
                             const studentDiv = document.createElement('div');
                             studentDiv.className = 'student-solution';
+
                             const errorTitle = document.createElement('div');
                             errorTitle.className = 'section-title';
                             errorTitle.textContent = "Error Analysis";
                             const errorDiv = document.createElement('div');
                             errorDiv.className = 'error-analysis';
+
                             const correctTitle = document.createElement('div');
                             correctTitle.className = 'section-title';
                             correctTitle.textContent = "Correct Solution";
                             const correctDiv = document.createElement('div');
                             correctDiv.className = 'correct-solution';
-                            const sections = [
-                                {el: questionTextDiv, content: q.question},
-                                {el: studentTitle, content: ''}, // No typing for titles
-                                {el: studentDiv, content: q.student_original},
-                                {el: errorTitle, content: ''},
-                                {el: errorDiv, content: q.error},
-                                {el: correctTitle, content: ''},
-                                {el: correctDiv, content: q.correct_solution}
-                            ];
-                            // Append titles without typing
-                            panel.appendChild(questionTextDiv);
+
+                            panel.appendChild(questionDiv);
                             panel.appendChild(studentTitle);
                             panel.appendChild(studentDiv);
                             panel.appendChild(errorTitle);
                             panel.appendChild(errorDiv);
                             panel.appendChild(correctTitle);
                             panel.appendChild(correctDiv);
-                            // Type the content sections
-                            typeWriter(questionTextDiv, q.question, 5, () => {
-                                typeWriter(studentDiv, q.student_original, 5, () => {
-                                    typeWriter(errorDiv, q.error, 5, () => {
-                                        typeWriter(correctDiv, q.correct_solution, 5);
+
+                            typeWriter(questionDiv, q.question, 10, () => {
+                                typeWriter(studentDiv, q.student_original, 10, () => {
+                                    typeWriter(errorDiv, q.error, 10, () => {
+                                        typeWriter(correctDiv, q.correct_solution, 10);
                                     });
                                 });
                             });
@@ -522,6 +488,7 @@ HTML_TEMPLATE = '''
                     }
                 });
             });
+
             const confirmMsg = document.createElement('div');
             confirmMsg.className = 'confirm-prompt';
             confirmMsg.innerHTML = `
@@ -558,34 +525,33 @@ HTML_TEMPLATE = '''
                     titleDiv.className = 'practice-title';
                     titleDiv.textContent = '📝 Practice Paper';
                     practiceBlock.appendChild(titleDiv);
-                    let currentQuestionDiv = null;
-                    let sections = [];
+
+                    const sections = [];
                     result.practice_questions.forEach(pq => {
-                        const qNumberDiv = document.createElement('div');
-                        qNumberDiv.className = 'question-number';
-                        qNumberDiv.textContent = `Question ${pq.number}`;
-                        const qTextDiv = document.createElement('div');
-                        qTextDiv.className = 'question-text';
-                        practiceBlock.appendChild(qNumberDiv);
-                        practiceBlock.appendChild(qTextDiv);
-                        sections.push({el: qTextDiv, content: pq.question});
+                        const numDiv = document.createElement('div');
+                        numDiv.className = 'question-number';
+                        numDiv.textContent = `Question ${pq.number}`;
+                        const textDiv = document.createElement('div');
+                        textDiv.className = 'question-text';
+                        practiceBlock.appendChild(numDiv);
+                        practiceBlock.appendChild(textDiv);
+                        sections.push(textDiv);
                     });
+
                     const footerDiv = document.createElement('div');
                     footerDiv.className = 'practice-footer';
                     footerDiv.textContent = 'Generated by CAS Educations';
                     practiceBlock.appendChild(footerDiv);
                     chatArea.appendChild(practiceBlock);
-                    // Type sections sequentially
+
                     let index = 0;
                     function typeNext() {
                         if (index < sections.length) {
-                            const { el, content } = sections[index];
-                            typeWriter(el, content, 5, typeNext);
+                            typeWriter(sections[index], result.practice_questions[index].question, 10, typeNext);
                             index++;
                         }
                     }
                     typeNext();
-                    setTimeout(() => renderMath(practiceBlock), 100);
                 } else {
                     const noMistakes = document.createElement('div');
                     noMistakes.className = 'message system';
@@ -622,21 +588,20 @@ HTML_TEMPLATE = '''
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
-# Set your OpenAI API key here
+
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
         api_key = OPENAI_API_KEY
         if not api_key:
-            return jsonify(
-                {'error': 'OpenAI API key not configured. Please set the OPENAI_API_KEY environment variable.'})
+            return jsonify({'error': 'OpenAI API key not configured. Please set the OPENAI_API_KEY environment variable.'})
         files = request.files.getlist('files')
         view = request.form.get('view', 'questions')
         if not files:
             return jsonify({'error': 'No files uploaded'})
         client = OpenAI(api_key=api_key)
-        # Process files
         file_contents = []
         for file in files:
             if file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
@@ -650,48 +615,32 @@ def analyze():
                     "type": "text",
                     "text": f"[PDF file: {file.filename} - Content extraction not implemented in this demo]"
                 })
-        # Analyze with OpenAI
         prompt = f"""Extract and analyze math problems from the uploaded {"questions" if view == "questions" else "answers"}.
+
+IMPORTANT: Question numbers can be in any format like 1, 2(a), 3b, Q.4, etc. Preserve the EXACT original question number as it appears in the image (including letters, dots, parentheses, etc.). Do not change or normalize them to plain numbers.
+
 CRITICAL FORMATTING RULES:
-1. Format EVERY mathematical expression using LaTeX with $ for inline math and $$ for display math
-2. For student_original: Extract what the student wrote BUT format ALL math expressions with $LaTeX$ notation
-3. All fields must use proper LaTeX formatting for all mathematical content
-Return a JSON array with this exact structure:
-[{{
-  "number": "1",
-  "question": "question text with $LaTeX$ formatting",
-  "student_original": "Student's work with ALL math wrapped in $LaTeX$ - transcribe their work but ensure every mathematical expression is in LaTeX",
-  "error": "one-line error description with $LaTeX$ if needed, or 'No error - solution is correct'",
-  "correct_solution": "Complete step-by-step solution with $LaTeX$ formatting. Each step on a new line separated by <br>"
-}}]
-LaTeX Examples:
-- Fractions: $\\frac{{a}}{{b}}$ or $\\dfrac{{a}}{{b}}$ for display style
-- Integrals: $\\int f(x)\\,dx$ or $\\displaystyle\\int f(x)\\,dx$
-- Square roots: $\\sqrt{{x}}$ or $\\sqrt[n]{{x}}$
-- Exponents: $x^2$ or $x^{{2n}}$
-- Trigonometry: $\\sin x$, $\\cos x$, $\\tan x$, $\\sec x$, etc.
-- Greek letters: $\\pi$, $\\theta$, $\\alpha$
-- Inverse trig: $\\sin^{{-1}} x$ or $\\arcsin x$ or $\\cos^{{-1}} x$
-- Log: $\\log x$ or $\\ln x$
-- Limits: $\\lim_{{x\\to 0}}$
-- Subscripts: $x_1$ or $C_1$
-Rules:
-- student_original must be VERBATIM - exactly what student wrote
-- All other text should have proper LaTeX formatting for math
-- Flag only real mathematical errors
-- In correct_solution, use <br> between steps
-- Each step should be a complete explanation"""
+1. Format EVERY mathematical expression using LaTeX with $ for inline and $$ for display.
+2. For student_original: Transcribe exactly what the student wrote, but wrap math in LaTeX.
+3. Return a JSON array with exact structure:
+[{
+  "number": "EXACT original question number string (e.g., '1', '2(a)', 'Q.5', '3b')",
+  "question": "question text with LaTeX",
+  "student_original": "student work with LaTeX",
+  "error": "error description or 'No error - solution is correct'",
+  "correct_solution": "step-by-step with <br> between steps and LaTeX"
+}]
+Ensure the "number" field is the precise label from the paper."""
         response = client.chat.completions.create(
-            model="gpt-5.1",
+            model="gpt-5.1",  # Updated to a more reliable vision model
             messages=[{
                 "role": "user",
                 "content": [{"type": "text", "text": prompt}] + file_contents
             }],
-            max_completion_tokens=9000,
-            temperature=0.3
+            max_tokens=9000,
+            temperature=0.2
         )
         result_text = response.choices[0].message.content.strip()
-        # Parse JSON
         if result_text.startswith('```json'):
             result_text = result_text[7:]
         if result_text.endswith('```'):
@@ -701,35 +650,34 @@ Rules:
         return jsonify({'questions': questions})
     except Exception as e:
         return jsonify({'error': str(e)})
+
 @app.route('/generate_practice', methods=['POST'])
 def generate_practice():
     try:
         api_key = OPENAI_API_KEY
         if not api_key:
-            return jsonify(
-                {'error': 'OpenAI API key not configured. Please set the OPENAI_API_KEY environment variable.'})
+            return jsonify({'error': 'OpenAI API key not configured.'})
         data = request.json
         analysis = data.get('analysis', {})
         questions = analysis.get('questions', [])
-        # Filter questions with real errors (left blank, partially correct, completely incorrect)
         error_questions = [q for q in questions if 'no error' not in q.get('error', '').lower()]
         if not error_questions:
             return jsonify({'practice_questions': []})
         client = OpenAI(api_key=api_key)
-        prompt = f"""Generate practice questions for these problems where students made mistakes:
+        prompt = f"""Generate practice questions for mistaken problems:
 {json.dumps(error_questions, indent=2)}
-Return a JSON array with this structure:
-[{{"number": "original_number", "question": "modified question with $LaTeX$ formatting targeting the same concept"}}]
+
+Return JSON array:
+[{"number": "USE THE EXACT SAME ORIGINAL NUMBER (preserve letters, format, etc.)", "question": "new similar question with LaTeX"}]
+
 Rules:
-- Use the SAME question numbers as originals
-- Create DIFFERENT but similar questions
-- Target the specific error made
-- Format ALL math using LaTeX: $x^2$, $\\frac{{a}}{{b}}$, $\\int$, etc.
-- Use $ for inline math and $$ for display equations"""
+- Use the IDENTICAL original "number" string exactly as provided.
+- Create different but similar questions targeting the error.
+- Full LaTeX formatting."""
         response = client.chat.completions.create(
             model="gpt-5.1",
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=2000,
+            max_tokens=2000,
             temperature=0.7
         )
         result_text = response.choices[0].message.content.strip()
@@ -742,6 +690,7 @@ Rules:
         return jsonify({'practice_questions': practice_questions})
     except Exception as e:
         return jsonify({'error': str(e)})
+
 if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🚀 Math OCR Analyzer Starting...")
@@ -754,5 +703,4 @@ if __name__ == '__main__':
     print("\n📱 Access the app at: http://localhost:5000")
     print("📱 ngrok URL will also work once you run ngrok!")
     print("=" * 60 + "\n")
-    # Run with host='0.0.0.0' to accept external connections
     app.run(debug=False, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
