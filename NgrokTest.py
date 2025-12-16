@@ -10,6 +10,9 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.colors import HexColor
+import re
+
+
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
@@ -1192,13 +1195,28 @@ Rules:
 
         result_text = response.choices[0].message.content.strip()
 
+        # More robust JSON extraction
         if result_text.startswith('```json'):
             result_text = result_text[7:]
+        elif result_text.startswith('```'):
+            result_text = result_text[3:]
         if result_text.endswith('```'):
             result_text = result_text[:-3]
         result_text = result_text.strip()
+        
+        # Try to find JSON array if response has extra text
+        import re
+        json_match = re.search(r'\[\s*\{.*\}\s*\]', result_text, re.DOTALL)
+        if json_match:
+            result_text = json_match.group(0)
 
-        questions = json.loads(result_text)
+        try:
+            questions = json.loads(result_text)
+        except json.JSONDecodeError as e:
+            # Log the problematic response for debugging
+            print(f"JSON Parse Error: {e}")
+            print(f"Response text: {result_text[:500]}...")
+            return jsonify({'error': f'Failed to parse AI response. Please try again. Error: {str(e)}'})
 
         return jsonify({'questions': questions})
 
@@ -1254,13 +1272,27 @@ Rules:
 
         result_text = response.choices[0].message.content.strip()
 
+        # More robust JSON extraction
         if result_text.startswith('```json'):
             result_text = result_text[7:]
+        elif result_text.startswith('```'):
+            result_text = result_text[3:]
         if result_text.endswith('```'):
             result_text = result_text[:-3]
         result_text = result_text.strip()
+        
+        # Try to find JSON array if response has extra text
+        import re
+        json_match = re.search(r'\[\s*\{.*\}\s*\]', result_text, re.DOTALL)
+        if json_match:
+            result_text = json_match.group(0)
 
-        practice_questions = json.loads(result_text)
+        try:
+            practice_questions = json.loads(result_text)
+        except json.JSONDecodeError as e:
+            print(f"JSON Parse Error in practice generation: {e}")
+            print(f"Response text: {result_text[:500]}...")
+            return jsonify({'error': f'Failed to parse AI response. Please try again. Error: {str(e)}'})
 
         return jsonify({'practice_questions': practice_questions})
 
@@ -1372,7 +1404,7 @@ Use EXACT question numbers and format math with LaTeX. Return JSON: [{{"number":
         for pq in practice_questions:
             story.append(Paragraph(f"Question {pq['number']}", question_number_style))
             # Remove LaTeX formatting for PDF (simple text version)
-            question_text = pq['question'].replace('$', '').replace('\\\\', '').replace('\\', '')
+            question_text = pq['question'].replace(', '').replace('\\', '')
             story.append(Paragraph(question_text, question_text_style))
             story.append(Spacer(1, 0.3*inch))
         
