@@ -1159,14 +1159,14 @@ def handle_login():
         session['logged_in'] = True
         session['login_time'] = datetime.utcnow().isoformat()
         
-        # 2. Save to JSON file
-        def save_login():
+        # 2. CAPTURE REQUEST DATA HERE (before starting thread)
+        ip_address = request.remote_addr or 'Unknown'
+        user_agent = request.headers.get('User-Agent', 'Unknown')[:100]
+        current_time = datetime.utcnow().isoformat()
+        
+        # 3. Save to JSON file (in background thread)
+        def save_login(username, ip_address, user_agent, current_time):
             try:
-                # CAPTURE REQUEST DATA HERE (before thread)
-                ip_address = request.remote_addr or 'Unknown'
-                user_agent = request.headers.get('User-Agent', 'Unknown')[:100]
-                current_time = datetime.utcnow().isoformat()
-                
                 login_data = {
                     'username': username,
                     'timestamp': current_time,
@@ -1194,6 +1194,22 @@ def handle_login():
                 print(f"✅ Login saved to {LOG_FILE}: {username}")
             except Exception as e:
                 print(f"⚠️ File save failed: {e}")
+        
+        # Run in background thread with captured data
+        threading.Thread(
+            target=save_login, 
+            args=(username, ip_address, user_agent, current_time),
+            daemon=True
+        ).start()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Login successful',
+            'user': username
+        })
+        
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
         
         # Run in background thread
         threading.Thread(target=save_login, daemon=True).start()
