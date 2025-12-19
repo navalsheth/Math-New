@@ -226,21 +226,21 @@ LOGIN_HTML = '''
 
         function loginWithCredentials() {
             const username = document.getElementById('username').value || 'user@example.com';
-            const emailPrefix = username.split('@')[0];
+            const emailPrefix = username.split('@')[0] || 'User';
             localStorage.setItem('userEmailPrefix', emailPrefix);
             window.location.href = '/main';
         }
 
         function loginWithGoogle() {
             const username = document.getElementById('username').value || 'user@example.com';
-            const emailPrefix = username.split('@')[0];
+            const emailPrefix = username.split('@')[0] || 'User';
             localStorage.setItem('userEmailPrefix', emailPrefix);
             window.location.href = '/main';
         }
 
         function loginWithApple() {
             const username = document.getElementById('username').value || 'user@example.com';
-            const emailPrefix = username.split('@')[0];
+            const emailPrefix = username.split('@')[0] || 'User';
             localStorage.setItem('userEmailPrefix', emailPrefix);
             window.location.href = '/main';
         }
@@ -468,7 +468,7 @@ MAIN_HTML = '''
         }
         .question-text {
             color: #1f2937;
-            font-size: 17px; /* Increased font size */
+            font-size: 17px;
             margin-bottom: 20px;
             line-height: 1.8;
             padding: 15px;
@@ -478,7 +478,7 @@ MAIN_HTML = '''
         }
         .section-title {
             color: #6b7280;
-            font-size: 15px; /* Increased font size */
+            font-size: 15px;
             font-weight: 600;
             text-transform: uppercase;
             margin: 20px 0 15px 0;
@@ -501,7 +501,7 @@ MAIN_HTML = '''
             margin-bottom: 20px;
             white-space: pre-wrap;
             line-height: 1.9;
-            font-size: 16px; /* Increased font size */
+            font-size: 16px;
             border: 1px solid #fde68a;
         }
         .error-analysis {
@@ -512,7 +512,7 @@ MAIN_HTML = '''
             margin-bottom: 20px;
             font-weight: 500;
             line-height: 1.9;
-            font-size: 16px; /* Increased font size */
+            font-size: 16px;
             border: 1px solid #fecaca;
         }
         .correct-solution {
@@ -520,7 +520,7 @@ MAIN_HTML = '''
             padding: 20px;
             border-radius: 8px;
             line-height: 1.9;
-            font-size: 16px; /* Increased font size */
+            font-size: 16px;
             border: 1px solid #a7f3d0;
             margin-bottom: 20px;
         }
@@ -682,14 +682,16 @@ MAIN_HTML = '''
         </div>
     </div>
     <script>
+        // Global variables
         let uploadedFiles = [];
         let isAnalyzing = false;
-        let analysisResult = null; // Global variable to store analysis result
+        let analysisResult = null;
 
         // Set welcome message from localStorage
         const emailPrefix = localStorage.getItem('userEmailPrefix') || 'User';
         document.getElementById('welcomeMessage').textContent = `Welcome, ${emailPrefix}!`;
 
+        // File upload handling
         document.getElementById('fileInput').addEventListener('change', function(e) {
             const files = Array.from(e.target.files);
             files.forEach(file => {
@@ -812,6 +814,7 @@ MAIN_HTML = '''
                 errorMsg.className = 'message system';
                 errorMsg.innerHTML = `<strong>Error:</strong> ${error.message}`;
                 chatArea.appendChild(errorMsg);
+                console.error('Analysis error:', error);
             }
 
             chatArea.scrollTop = chatArea.scrollHeight;
@@ -902,6 +905,8 @@ MAIN_HTML = '''
             chatArea.appendChild(loadingMsg);
 
             try {
+                console.log('Sending to /generate_practice:', analysisResult); // Debug log
+
                 const response = await fetch('/generate_practice', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -909,13 +914,19 @@ MAIN_HTML = '''
                 });
 
                 if (!response.ok) {
-                    throw new Error(`Server error: ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(`Server error: ${response.status}. ${errorData.error || ''}`);
                 }
 
                 const result = await response.json();
                 loadingMsg.remove();
 
-                if (result.practice_questions && result.practice_questions.length > 0) {
+                if (result.error) {
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'message system';
+                    errorMsg.innerHTML = `<strong>Error:</strong> ${result.error}`;
+                    chatArea.appendChild(errorMsg);
+                } else if (result.practice_questions && result.practice_questions.length > 0) {
                     const practiceBlock = document.createElement('div');
                     practiceBlock.className = 'practice-paper';
                     practiceBlock.id = 'practice-paper';
@@ -960,6 +971,7 @@ MAIN_HTML = '''
                 errorMsg.className = 'message system';
                 errorMsg.innerHTML = `<strong>Error:</strong> ${error.message}`;
                 chatArea.appendChild(errorMsg);
+                console.error('Generate practice error:', error);
             }
         }
 
@@ -1064,10 +1076,13 @@ def analyze():
         try:
             questions = json.loads(result_text)
             return jsonify({'questions': questions})
-        except json.JSONDecodeError:
-            return jsonify({'error': 'Failed to parse OpenAI response as JSON.'}), 500
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            print(f"Problematic text: {result_text}")
+            return jsonify({'error': f'Failed to parse OpenAI response: {str(e)}'}), 500
 
     except Exception as e:
+        print(f"Analysis error: {str(e)}")
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
 @app.route('/generate_practice', methods=['POST'])
@@ -1078,14 +1093,22 @@ def generate_practice():
             return jsonify({'error': 'OpenAI API key not configured.'}), 500
 
         data = request.json
+        if not data or 'analysis' not in data:
+            return jsonify({'error': 'No analysis data provided.'}), 400
+
         analysis = data.get('analysis', {})
         questions = analysis.get('questions', [])
 
+        if not questions:
+            return jsonify({'error': 'No questions found in analysis data.'}), 400
+
         error_questions = [q for q in questions if 'no error' not in q.get('error', '').lower()]
+
         if not error_questions:
             return jsonify({'practice_questions': []})
 
         client = OpenAI(api_key=api_key)
+
         prompt = f"""
         Generate practice questions for these problems where students made mistakes:
 
@@ -1098,7 +1121,7 @@ def generate_practice():
         4. Format ALL math using LaTeX: $x^2$, $\\frac{{a}}{{b}}$, $\\int$, etc.
 
         Return a JSON array with this structure:
-        [{"number": "exact_original_question_number", "question": "modified question with $LaTeX$ formatting targeting same concept"}]
+        [{{"number": "exact_original_question_number", "question": "modified question with $LaTeX$ formatting targeting same concept"}}]
         """
 
         response = client.chat.completions.create(
@@ -1109,6 +1132,7 @@ def generate_practice():
         )
 
         result_text = response.choices[0].message.content.strip()
+
         if result_text.startswith('```json'):
             result_text = result_text[7:]
         if result_text.endswith('```'):
@@ -1118,11 +1142,14 @@ def generate_practice():
         try:
             practice_questions = json.loads(result_text)
             return jsonify({'practice_questions': practice_questions})
-        except json.JSONDecodeError:
-            return jsonify({'error': 'Failed to parse practice questions response as JSON.'}), 500
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in generate_practice: {e}")
+            print(f"Problematic text: {result_text}")
+            return jsonify({'error': f'Failed to parse practice questions: {str(e)}'}), 500
 
     except Exception as e:
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+        print(f"Generate practice error: {str(e)}")
+        return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
 
 if __name__ == '__main__':
     print("\n" + "=" * 60)
