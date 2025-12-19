@@ -15,8 +15,14 @@ from psycopg2.extras import RealDictCursor
 app = Flask(__name__)
 
 def get_db():
+    # Get DATABASE_URL and strip any whitespace/newlines
+    database_url = os.environ.get("DATABASE_URL", "").strip()
+    
+    if not database_url:
+        raise ValueError("DATABASE_URL environment variable is not set")
+    
     return psycopg2.connect(
-        os.environ["DATABASE_URL"],
+        database_url,
         sslmode="require"
     )
 
