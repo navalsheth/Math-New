@@ -8,9 +8,20 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.enums import TA_CENTER
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
 
 app = Flask(__name__)
+
+def get_db():
+    return psycopg2.connect(
+        os.environ["DATABASE_URL"],
+        sslmode="require"
+    )
+
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
+
 
 # ============ NGROK FIX ============
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -224,12 +235,26 @@ LOGIN_HTML = '''
             appleBtn.style.display = appleToggle.classList.contains('active') ? 'flex' : 'none';
         });
 
-        function loginWithCredentials() {
-            const username = document.getElementById('username').value || 'user@example.com';
-            const emailPrefix = username.split('@')[0] || 'User';
-            localStorage.setItem('userEmailPrefix', emailPrefix);
-            window.location.href = '/main';
-        }
+        async function loginWithCredentials() {
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+
+    const res = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+        localStorage.setItem('userEmailPrefix', username);
+        window.location.href = '/main';
+    } else {
+        alert(data.error);
+    }
+}
+
 
         function loginWithGoogle() {
             const username = document.getElementById('username').value || 'user@example.com';
@@ -1087,6 +1112,31 @@ def index():
 def main():
     return render_template_string(MAIN_HTML)
 
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({"success": False, "error": "Missing credentials"})
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO users (username, password)
+        VALUES (%s, %s)
+        ON CONFLICT (username) DO NOTHING
+    """, (username, password))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return jsonify({"success": True})
+
+
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
@@ -1168,6 +1218,27 @@ def analyze():
         print(f"Analysis error: {str(e)}")
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
+@app.route('/init_db')
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return "✅ Database initialized"
+
+
 @app.route('/generate_practice', methods=['POST'])
 def generate_practice():
     try:
@@ -1232,6 +1303,10 @@ def generate_practice():
     except Exception as e:
         print(f"Generate practice error: {str(e)}")
         return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
+
+  
+
+
 
 if __name__ == '__main__':
     print("\n" + "=" * 60)
