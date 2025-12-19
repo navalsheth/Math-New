@@ -276,7 +276,7 @@ MAIN_HTML = '''
     </script>
     <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha512-G7CQHM3G5yfT90cC6/c15WpvGCFtTb8pDZ8g8mLccKFMZg4FzxD0tG5PXHMDDZ7KQPTCsAVxZdFZzMRSN8Zg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
     <style>
         * {
@@ -534,6 +534,8 @@ MAIN_HTML = '''
             border-radius: 8px;
             box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
             border: 1px solid #e5e7eb;
+            max-width: 100%;
+            box-sizing: border-box;
         }
         .practice-header {
             margin-bottom: 20px;
@@ -554,6 +556,7 @@ MAIN_HTML = '''
             padding: 15px 0;
             border-bottom: 1px solid #f3f4f6;
             margin-bottom: 15px;
+            page-break-inside: avoid;
         }
         .practice-question:last-child {
             border-bottom: none;
@@ -578,9 +581,6 @@ MAIN_HTML = '''
             padding-top: 15px;
             border-top: 1px solid #e5e7eb;
             text-align: center;
-            color: #6b7280;
-            font-size: 13px;
-            font-weight: 500;
         }
         .confirm-prompt {
             background: #fef3c7;
@@ -651,9 +651,41 @@ MAIN_HTML = '''
             display: inline-flex;
             align-items: center;
             gap: 8px;
+            transition: all 0.2s;
         }
-        .download-btn:hover {
+        .download-btn:hover:not(:disabled) {
             background: #2563eb;
+        }
+        .download-btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+        }
+        @media print {
+            .practice-paper {
+                background: white;
+                box-shadow: none;
+                border: none;
+                padding: 0;
+                margin: 0;
+                width: 100%;
+            }
+            .practice-header {
+                margin-bottom: 20px;
+                padding-bottom: 10px;
+                border-bottom: 1px solid #e5e7eb;
+            }
+            .practice-question {
+                page-break-inside: avoid;
+                margin-bottom: 20px;
+            }
+            .practice-question-number {
+                font-size: 18px;
+                margin-bottom: 10px;
+            }
+            .practice-question-text {
+                font-size: 16px;
+                line-height: 1.6;
+            }
         }
     </style>
 </head>
@@ -878,7 +910,7 @@ MAIN_HTML = '''
                 Would you like to generate a practice paper for the questions with mistakes?
                 <div class="confirm-buttons">
                     <button class="btn-yes" onclick="generatePractice()">Yes, Generate</button>
-                    <button class="btn btn-no" onclick="skipPractice()">No, Thanks</button>
+                    <button class="btn-no" onclick="skipPractice()">No, Thanks</button>
                 </div>
             `;
             chatArea.appendChild(confirmMsg);
@@ -905,7 +937,7 @@ MAIN_HTML = '''
             chatArea.appendChild(loadingMsg);
 
             try {
-                console.log('Sending to /generate_practice:', analysisResult); // Debug log
+                console.log('Sending to /generate_practice:', analysisResult);
 
                 const response = await fetch('/generate_practice', {
                     method: 'POST',
@@ -981,14 +1013,65 @@ MAIN_HTML = '''
         }
 
         async function downloadPracticePaper() {
-            const practicePaper = document.getElementById('practice-paper');
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const imgData = await html2canvas(practicePaper, { scale: 2 });
-            const imgWidth = pdf.internal.pageSize.getWidth();
-            const imgHeight = (imgData.height * imgWidth) / imgData.width;
+            try {
+                // Check if jsPDF is loaded
+                if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+                    throw new Error('PDF library not loaded. Please refresh the page and try again.');
+                }
 
-            pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-            pdf.save('practice-paper.pdf');
+                const { jsPDF } = window.jspdf;
+                const practicePaper = document.getElementById('practice-paper');
+
+                if (!practicePaper) {
+                    throw new Error('Practice paper element not found.');
+                }
+
+                // Show loading state
+                const originalButtonText = document.querySelector('.download-btn').innerHTML;
+                document.querySelector('.download-btn').innerHTML = '<span class="loading"></span> Preparing PDF...';
+                document.querySelector('.download-btn').disabled = true;
+
+                // Create PDF
+                const pdf = new jsPDF('p', 'mm', 'a4');
+
+                // Convert to canvas with proper scaling
+                const canvas = await html2canvas(practicePaper, {
+                    scale: 2,
+                    logging: true,
+                    useCORS: true,
+                    allowTaint: true,
+                    backgroundColor: '#ffffff'
+                });
+
+                // Calculate dimensions
+                const imgWidth = pdf.internal.pageSize.getWidth();
+                const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+                // Add to PDF
+                pdf.addImage(canvas, 'PNG', 0, 0, imgWidth, imgHeight);
+
+                // Save PDF
+                pdf.save('math-practice-paper.pdf');
+
+                // Restore button
+                document.querySelector('.download-btn').innerHTML = originalButtonText;
+                document.querySelector('.download-btn').disabled = false;
+
+            } catch (error) {
+                console.error('PDF generation error:', error);
+                const chatArea = document.getElementById('chatArea');
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'message system';
+                errorMsg.innerHTML = `<strong>Error:</strong> Failed to generate PDF: ${error.message}`;
+                chatArea.appendChild(errorMsg);
+                chatArea.scrollTop = chatArea.scrollHeight;
+
+                // Restore button if error occurs
+                if (document.querySelector('.download-btn')) {
+                    document.querySelector('.download-btn').innerHTML = '📥 Download as PDF';
+                    document.querySelector('.download-btn').disabled = false;
+                }
+            }
         }
     </script>
 </body>
@@ -1132,7 +1215,6 @@ def generate_practice():
         )
 
         result_text = response.choices[0].message.content.strip()
-
         if result_text.startswith('```json'):
             result_text = result_text[7:]
         if result_text.endswith('```'):
