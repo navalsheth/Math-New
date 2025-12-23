@@ -11,26 +11,19 @@ from reportlab.lib.enums import TA_CENTER
 from datetime import datetime
 import threading
 
-
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
-
-# Enable sessions for login persistence
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+
 from flask_session import Session
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_FILE_DIR'] = '/tmp/flask_sessions'
 os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
 Session(app)
 
-# Define log file path - will be created automatically
 LOG_FILE = '/tmp/login_logs.json'
 
-# ============ NGROK FIX ============
-from werkzeug.middleware.proxy_fix import ProxyFix
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-
-# ============ HTML TEMPLATES ============
+# HTML Templates
 LOGIN_HTML = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -232,73 +225,71 @@ LOGIN_HTML = '''
     <script>
         const appleToggle = document.getElementById('appleToggle');
         const appleBtn = document.getElementById('appleBtn');
-
         appleToggle.addEventListener('click', () => {
             appleToggle.classList.toggle('active');
             appleBtn.style.display = appleToggle.classList.contains('active') ? 'flex' : 'none';
         });
 
         function loginWithCredentials() {
-    const username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-    
-    if (!username) {
-        alert('Please enter a username');
-        return;
-    }
-    
-    fetch('/api/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            username: username,
-            password: password
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            const emailPrefix = username.split('@')[0] || 'User';
-            localStorage.setItem('userEmailPrefix', emailPrefix);
-            window.location.href = '/main';
-        } else {
-            alert('Login failed: ' + data.message);
-        }
-    });
-}
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
 
-function loginWithGoogle() {
-    const username = document.getElementById('username').value || 'google_user';
-    fetch('/api/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username: username, provider: 'google'})
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            localStorage.setItem('userEmailPrefix', username);
-            window.location.href = '/main';
-        }
-    });
-}
+            if (!username) {
+                alert('Please enter a username');
+                return;
+            }
 
-function loginWithApple() {
-    const username = document.getElementById('username').value || 'apple_user';
-    fetch('/api/login', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({username: username, provider: 'apple'})
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            localStorage.setItem('userEmailPrefix', username);
-            window.location.href = '/main';
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    username: username,
+                    password: password
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const emailPrefix = username.split('@')[0] || 'User';
+                    localStorage.setItem('userEmailPrefix', emailPrefix);
+                    window.location.href = '/main';
+                } else {
+                    alert('Login failed: ' + data.message);
+                }
+            });
         }
-    });
-}
-        
+
+        function loginWithGoogle() {
+            const username = document.getElementById('username').value || 'google_user';
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: username, provider: 'google'})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.setItem('userEmailPrefix', username);
+                    window.location.href = '/main';
+                }
+            });
+        }
+
+        function loginWithApple() {
+            const username = document.getElementById('username').value || 'apple_user';
+            fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({username: username, provider: 'apple'})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.setItem('userEmailPrefix', username);
+                    window.location.href = '/main';
+                }
+            });
+        }
     </script>
 </body>
 </html>
@@ -710,6 +701,46 @@ MAIN_HTML = '''
         .download-btn:hover {
             background: #2563eb;
         }
+        .progress-bar {
+            height: 4px;
+            background: #e5e7eb;
+            border-radius: 2px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        .progress {
+            height: 100%;
+            background: #667eea;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .analyze-again-btn {
+            background: #f59e0b;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        .analyze-again-btn:hover {
+            background: #d97706;
+        }
+        .user-feedback {
+            margin-top: 15px;
+        }
+        .user-feedback textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            resize: vertical;
+            min-height: 60px;
+            font-family: inherit;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -763,7 +794,6 @@ MAIN_HTML = '''
             const chatArea = document.getElementById('chatArea');
             const existingFileMsg = document.getElementById('fileMessage');
             if (existingFileMsg) existingFileMsg.remove();
-
             if (uploadedFiles.length > 0) {
                 const fileMsg = document.createElement('div');
                 fileMsg.id = 'fileMessage';
@@ -795,7 +825,6 @@ MAIN_HTML = '''
         function toggleDropdown(index) {
             const content = document.getElementById(`question-content-${index}`);
             const arrow = document.getElementById(`arrow-${index}`);
-
             if (content.classList.contains('open')) {
                 content.classList.remove('open');
                 arrow.classList.remove('open');
@@ -808,7 +837,6 @@ MAIN_HTML = '''
         async function typeText(element, text, speed = 5) {
             let i = 0;
             const chunks = text.split(/(\$\$[\s\S]*?\$\$|\$[^\$]+?\$|<br>)/);
-
             for (const chunk of chunks) {
                 if (chunk.startsWith('$$') || chunk.startsWith('$')) {
                     element.innerHTML += chunk;
@@ -827,7 +855,6 @@ MAIN_HTML = '''
 
         async function startAnalysis() {
             if (uploadedFiles.length === 0 || isAnalyzing) return;
-
             isAnalyzing = true;
             const chatArea = document.getElementById('chatArea');
             const loadingMsg = document.createElement('div');
@@ -835,33 +862,27 @@ MAIN_HTML = '''
             loadingMsg.innerHTML = '<div class="loading"></div> Analyzing your files...';
             chatArea.appendChild(loadingMsg);
             chatArea.scrollTop = chatArea.scrollHeight;
-
             document.getElementById('startBtn').disabled = true;
-
             const formData = new FormData();
             uploadedFiles.forEach(file => formData.append('files', file));
-
             try {
                 const response = await fetch('/analyze', {
                     method: 'POST',
                     body: formData
                 });
-
                 if (!response.ok) {
                     throw new Error(`Server error: ${response.status}`);
                 }
-
                 const result = await response.json();
                 loadingMsg.remove();
-
                 if (result.error) {
                     const errorMsg = document.createElement('div');
                     errorMsg.className = 'message system';
                     errorMsg.innerHTML = `<strong>Error:</strong> ${result.error}`;
                     chatArea.appendChild(errorMsg);
                 } else {
-                    analysisResult = result; // Store the result globally
-                    await displayAnalysisWithTyping(result);
+                    analysisResult = result;
+                    await displayAnalysisWithProgress(result);
                 }
             } catch (error) {
                 loadingMsg.remove();
@@ -871,18 +892,15 @@ MAIN_HTML = '''
                 chatArea.appendChild(errorMsg);
                 console.error('Analysis error:', error);
             }
-
             chatArea.scrollTop = chatArea.scrollHeight;
             document.getElementById('startBtn').disabled = false;
             isAnalyzing = false;
         }
 
-        async function displayAnalysisWithTyping(result) {
+        async function displayAnalysisWithProgress(result) {
             const chatArea = document.getElementById('chatArea');
-
             for (let i = 0; i < result.questions.length; i++) {
                 const q = result.questions[i];
-
                 const qBlock = document.createElement('div');
                 qBlock.className = 'question-dropdown';
                 qBlock.innerHTML = `
@@ -892,6 +910,7 @@ MAIN_HTML = '''
                         </div>
                         <span class="dropdown-arrow" id="arrow-${i}">▼</span>
                     </div>
+                    <div class="progress-bar"><div class="progress" id="progress-${i}"></div></div>
                     <div class="question-content" id="question-content-${i}">
                         <div class="question-inner">
                             <div class="question-text" id="q-text-${i}"></div>
@@ -901,21 +920,24 @@ MAIN_HTML = '''
                             <div class="error-analysis" id="q-error-${i}"></div>
                             <div class="section-title">Correct Solution</div>
                             <div class="correct-solution" id="q-correct-${i}"></div>
+                            <div class="user-feedback">
+                                <textarea id="feedback-${i}" placeholder="Specify where the error was made..."></textarea>
+                                <button class="analyze-again-btn" onclick="analyzeAgain(${i})">Analyze Again</button>
+                            </div>
                         </div>
                     </div>
                 `;
                 chatArea.appendChild(qBlock);
-
-                // Open dropdown automatically
-                document.getElementById(`question-content-${i}`).classList.add('open');
-                document.getElementById(`arrow-${i}`).classList.add('open');
-
+                // Simulate progress
+                const progressBar = document.getElementById(`progress-${i}`);
+                for (let j = 0; j <= 100; j += 10) {
+                    progressBar.style.width = `${j}%`;
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
                 // Type each section with improved formatting
                 await typeText(document.getElementById(`q-text-${i}`), q.question, 3);
                 await typeText(document.getElementById(`q-student-${i}`), q.student_original, 3);
                 await typeText(document.getElementById(`q-error-${i}`), q.error, 3);
-
-                // Format correct solution with line breaks
                 const correctSolutionElement = document.getElementById(`q-correct-${i}`);
                 const steps = q.correct_solution.split('<br>').filter(step => step.trim() !== '');
                 for (const step of steps) {
@@ -924,7 +946,6 @@ MAIN_HTML = '''
                     await typeText(p, step, 3);
                 }
             }
-
             // Show confirmation prompt
             const confirmMsg = document.createElement('div');
             confirmMsg.className = 'confirm-prompt';
@@ -940,6 +961,60 @@ MAIN_HTML = '''
             chatArea.scrollTop = chatArea.scrollHeight;
         }
 
+        async function analyzeAgain(index) {
+            const feedback = document.getElementById(`feedback-${index}`).value;
+            if (!feedback) {
+                alert('Please specify where the error was made.');
+                return;
+            }
+            const chatArea = document.getElementById('chatArea');
+            const loadingMsg = document.createElement('div');
+            loadingMsg.className = 'message system';
+            loadingMsg.innerHTML = '<div class="loading"></div> Re-analyzing with your feedback...';
+            chatArea.appendChild(loadingMsg);
+            chatArea.scrollTop = chatArea.scrollHeight;
+            try {
+                const response = await fetch('/reanalyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        question_index: index,
+                        feedback: feedback,
+                        analysis: analysisResult
+                    })
+                });
+                if (!response.ok) {
+                    throw new Error(`Server error: ${response.status}`);
+                }
+                const result = await response.json();
+                loadingMsg.remove();
+                if (result.error) {
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'message system';
+                    errorMsg.innerHTML = `<strong>Error:</strong> ${result.error}`;
+                    chatArea.appendChild(errorMsg);
+                } else {
+                    // Update the specific sections
+                    await typeText(document.getElementById(`q-error-${index}`), result.error, 3);
+                    const correctSolutionElement = document.getElementById(`q-correct-${index}`);
+                    correctSolutionElement.innerHTML = '';
+                    const steps = result.correct_solution.split('<br>').filter(step => step.trim() !== '');
+                    for (const step of steps) {
+                        const p = document.createElement('p');
+                        correctSolutionElement.appendChild(p);
+                        await typeText(p, step, 3);
+                    }
+                }
+            } catch (error) {
+                loadingMsg.remove();
+                const errorMsg = document.createElement('div');
+                errorMsg.className = 'message system';
+                errorMsg.innerHTML = `<strong>Error:</strong> ${error.message}`;
+                chatArea.appendChild(errorMsg);
+                console.error('Re-analysis error:', error);
+            }
+        }
+
         async function generatePractice() {
             if (!analysisResult) {
                 const chatArea = document.getElementById('chatArea');
@@ -949,33 +1024,25 @@ MAIN_HTML = '''
                 chatArea.appendChild(errorMsg);
                 return;
             }
-
             const chatArea = document.getElementById('chatArea');
             const confirmPrompt = document.querySelector('.confirm-prompt');
             if (confirmPrompt) confirmPrompt.remove();
-
             const loadingMsg = document.createElement('div');
             loadingMsg.className = 'message system';
             loadingMsg.innerHTML = '<div class="loading"></div> Generating practice paper...';
             chatArea.appendChild(loadingMsg);
-
             try {
-                console.log('Sending to /generate_practice:', analysisResult); // Debug log
-
                 const response = await fetch('/generate_practice', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ analysis: analysisResult })
                 });
-
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
                     throw new Error(`Server error: ${response.status}. ${errorData.error || ''}`);
                 }
-
                 const result = await response.json();
                 loadingMsg.remove();
-
                 if (result.error) {
                     const errorMsg = document.createElement('div');
                     errorMsg.className = 'message system';
@@ -998,9 +1065,7 @@ MAIN_HTML = '''
                         </div>
                     `;
                     chatArea.appendChild(practiceBlock);
-
                     const container = document.getElementById('practice-questions-container');
-
                     for (const pq of result.practice_questions) {
                         const pqDiv = document.createElement('div');
                         pqDiv.className = 'practice-question';
@@ -1009,7 +1074,6 @@ MAIN_HTML = '''
                             <div class="practice-question-text" id="practice-q-${pq.number}"></div>
                         `;
                         container.appendChild(pqDiv);
-
                         await typeText(document.getElementById(`practice-q-${pq.number}`), pq.question, 3);
                     }
                 } else {
@@ -1018,7 +1082,6 @@ MAIN_HTML = '''
                     noMistakes.innerHTML = '<strong>Great job!</strong> No mistakes found, so no practice paper needed.';
                     chatArea.appendChild(noMistakes);
                 }
-
                 chatArea.scrollTop = chatArea.scrollHeight;
             } catch (error) {
                 loadingMsg.remove();
@@ -1036,12 +1099,12 @@ MAIN_HTML = '''
         }
 
         async function downloadPracticePaper() {
+            const { jsPDF } = window.jspdf;
             const practicePaper = document.getElementById('practice-paper');
             const pdf = new jsPDF('p', 'mm', 'a4');
             const imgData = await html2canvas(practicePaper, { scale: 2 });
             const imgWidth = pdf.internal.pageSize.getWidth();
             const imgHeight = (imgData.height * imgWidth) / imgData.width;
-
             pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
             pdf.save('practice-paper.pdf');
         }
@@ -1050,16 +1113,15 @@ MAIN_HTML = '''
 </html>
 '''
 
-# ============ ROUTES ============
+# Routes
 @app.route('/')
 def index():
     return render_template_string(LOGIN_HTML)
 
 @app.route('/main')
 def main():
-    # Check if user is logged in
     if not session.get('logged_in'):
-        return redirect('/')  # Send back to login if not logged in
+        return redirect('/')
     return render_template_string(MAIN_HTML)
 
 @app.route('/analyze', methods=['POST'])
@@ -1068,14 +1130,11 @@ def analyze():
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
             return jsonify({'error': 'OpenAI API key not configured.'}), 500
-
         files = request.files.getlist('files')
         if not files:
             return jsonify({'error': 'No files uploaded'}), 400
-
         client = OpenAI(api_key=api_key)
         file_contents = []
-
         for file in files:
             if file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
                 file.seek(0)
@@ -1089,10 +1148,8 @@ def analyze():
                     "type": "text",
                     "text": f"[PDF file: {file.filename} - Content extraction not implemented in this demo]"
                 })
-
         prompt = """
         Extract and analyze math problems from the uploaded files.
-
         CRITICAL INSTRUCTIONS:
         1. Use the EXACT question numbers from the images (e.g., if image shows "Q.7", use "7" as the number)
         2. Format ALL mathematical expressions using LaTeX with $ for inline math and $$ for display math
@@ -1103,7 +1160,6 @@ def analyze():
            - Completely incorrect solutions
            - Mathematical errors in calculations or reasoning
         5. If solution is fully correct, set error to "No error - solution is correct"
-
         Return a JSON array with this exact structure:
         [{
           "number": "exact_question_number_from_image",
@@ -1113,7 +1169,6 @@ def analyze():
           "correct_solution": "Complete step-by-step solution with $LaTeX$ formatting. Each step on a new line separated by <br>"
         }]
         """
-
         response = client.chat.completions.create(
             model="gpt-5.1",
             messages=[{
@@ -1123,14 +1178,12 @@ def analyze():
             max_completion_tokens=9000,
             temperature=0.3
         )
-
         result_text = response.choices[0].message.content.strip()
-        if result_text.startswith('```json'):
+        if result_text.startswith('```json\:disable-run'):
             result_text = result_text[7:]
         if result_text.endswith('```'):
             result_text = result_text[:-3]
         result_text = result_text.strip()
-
         try:
             questions = json.loads(result_text)
             return jsonify({'questions': questions})
@@ -1138,33 +1191,130 @@ def analyze():
             print(f"JSON decode error: {e}")
             print(f"Problematic text: {result_text}")
             return jsonify({'error': f'Failed to parse OpenAI response: {str(e)}'}), 500
-
     except Exception as e:
         print(f"Analysis error: {str(e)}")
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
-# ============ LOGIN API ============
+@app.route('/reanalyze', methods=['POST'])
+def reanalyze():
+    try:
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            return jsonify({'error': 'OpenAI API key not configured.'}), 500
+        data = request.json
+        if not data or 'analysis' not in data or 'question_index' not in data or 'feedback' not in data:
+            return jsonify({'error': 'Invalid request data.'}), 400
+        question_index = data['question_index']
+        feedback = data['feedback']
+        analysis = data['analysis']
+        questions = analysis.get('questions', [])
+        if question_index < 0 or question_index >= len(questions):
+            return jsonify({'error': 'Invalid question index.'}), 400
+        question = questions[question_index]
+        client = OpenAI(api_key=api_key)
+        prompt = f"""
+        Re-analyze this question based on user feedback:
+        Question: {question['question']}
+        Student's Solution: {question['student_original']}
+        Original Error Analysis: {question['error']}
+        User Feedback: "{feedback}"
+        CRITICAL INSTRUCTIONS:
+        1. Update ONLY the error analysis and correct solution based on the user feedback
+        2. Keep the student's solution EXACTLY as is
+        3. Format ALL math using LaTeX: $x^2$, $\\frac{{a}}{{b}}$, $\\int$, etc.
+        Return a JSON object with this structure:
+        {{
+          "error": "Updated error description with $LaTeX$ if needed",
+          "correct_solution": "Updated step-by-step solution with $LaTeX$ formatting. Each step on a new line separated by <br>"
+        }}
+        """
+        response = client.chat.completions.create(
+            model="gpt-5.1",
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=2000,
+            temperature=0.3
+        )
+        result_text = response.choices[0].message.content.strip()
+        if result_text.startswith('```json'):
+            result_text = result_text[7:]
+        if result_text.endswith('```'):
+            result_text = result_text[:-3]
+        result_text = result_text.strip()
+        try:
+            updated_analysis = json.loads(result_text)
+            return jsonify(updated_analysis)
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in reanalyze: {e}")
+            print(f"Problematic text: {result_text}")
+            return jsonify({'error': f'Failed to parse re-analysis response: {str(e)}'}), 500
+    except Exception as e:
+        print(f"Re-analysis error: {str(e)}")
+        return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
+
+@app.route('/generate_practice', methods=['POST'])
+def generate_practice():
+    try:
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            return jsonify({'error': 'OpenAI API key not configured.'}), 500
+        data = request.json
+        if not data or 'analysis' not in data:
+            return jsonify({'error': 'No analysis data provided.'}), 400
+        analysis = data.get('analysis', {})
+        questions = analysis.get('questions', [])
+        if not questions:
+            return jsonify({'error': 'No questions found in analysis data.'}), 400
+        error_questions = [q for q in questions if 'no error' not in q.get('error', '').lower()]
+        if not error_questions:
+            return jsonify({'practice_questions': []})
+        client = OpenAI(api_key=api_key)
+        prompt = f"""
+        Generate practice questions for these problems where students made mistakes:
+        {json.dumps(error_questions, indent=2)}
+        CRITICAL INSTRUCTIONS:
+        1. Use the EXACT SAME question numbers as the original questions
+        2. Create MODIFIED versions of the questions (not identical, but similar concept)
+        3. Target the specific errors or concepts the student struggled with
+        4. Format ALL math using LaTeX: $x^2$, $\\frac{{a}}{{b}}$, $\\int$, etc.
+        Return a JSON array with this structure:
+        [{{"number": "exact_original_question_number", "question": "modified question with $LaTeX$ formatting targeting same concept"}}]
+        """
+        response = client.chat.completions.create(
+            model="gpt-5.1",
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=2000,
+            temperature=0.7
+        )
+        result_text = response.choices[0].message.content.strip()
+        if result_text.startswith('```json'):
+            result_text = result_text[7:]
+        if result_text.endswith('```'):
+            result_text = result_text[:-3]
+        result_text = result_text.strip()
+        try:
+            practice_questions = json.loads(result_text)
+            return jsonify({'practice_questions': practice_questions})
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error in generate_practice: {e}")
+            print(f"Problematic text: {result_text}")
+            return jsonify({'error': f'Failed to parse practice questions: {str(e)}'}), 500
+    except Exception as e:
+        print(f"Generate practice error: {str(e)}")
+        return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
+
 @app.route('/api/login', methods=['POST'])
 def handle_login():
-    """Save login to file and create session"""
     try:
         data = request.json
         username = data.get('username', '').strip()
-        
         if not username:
             return jsonify({'success': False, 'message': 'Username required'}), 400
-        
-        # 1. Create user session (persists on Render)
         session['user'] = username
         session['logged_in'] = True
         session['login_time'] = datetime.utcnow().isoformat()
-        
-        # 2. CAPTURE REQUEST DATA HERE (before starting thread)
         ip_address = request.remote_addr or 'Unknown'
         user_agent = request.headers.get('User-Agent', 'Unknown')[:100]
         current_time = datetime.utcnow().isoformat()
-        
-        # 3. Save to JSON file (in background thread)
         def save_login(username, ip_address, user_agent, current_time):
             try:
                 login_data = {
@@ -1173,8 +1323,6 @@ def handle_login():
                     'ip': ip_address,
                     'user_agent': user_agent
                 }
-                
-                # Load existing logins or create new file
                 if os.path.exists(LOG_FILE):
                     with open(LOG_FILE, 'r') as f:
                         try:
@@ -1183,217 +1331,32 @@ def handle_login():
                             logins = []
                 else:
                     logins = []
-                
-                # Add new login
                 logins.append(login_data)
-                
-                # Save back to file
                 with open(LOG_FILE, 'w') as f:
                     json.dump(logins, f, indent=2)
-                
                 print(f"✅ Login saved to {LOG_FILE}: {username}")
             except Exception as e:
                 print(f"⚠️ File save failed: {e}")
-        
-        # Run in background thread with captured data
         threading.Thread(
-            target=save_login, 
+            target=save_login,
             args=(username, ip_address, user_agent, current_time),
             daemon=True
         ).start()
-        
         return jsonify({
             'success': True,
             'message': 'Login successful',
             'user': username
         })
-        
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
-        
-        # Run in background thread
-        threading.Thread(target=save_login, daemon=True).start()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Login successful',
-            'user': username
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
-
-# ============ VIEW LOGS ============
-@app.route('/view-logs')
-def view_logs():
-    """View all saved logins"""
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'r') as f:
-            logins = json.load(f)
-        
-        # Create HTML table
-        html = '''
-        <!DOCTYPE html>
-        <html>
-        <head><title>Login Logs</title>
-        <style>
-            body { font-family: Arial; padding: 20px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-            th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
-            th { background-color: #667eea; color: white; }
-            tr:nth-child(even) { background-color: #f2f2f2; }
-        </style>
-        </head>
-        <body>
-            <h1>🔐 Login Logs (Total: ''' + str(len(logins)) + ''')</h1>
-            <table>
-                <tr><th>#</th><th>Username</th><th>Timestamp</th><th>IP Address</th><th>User Agent</th></tr>
-        '''
-        
-        for i, login in enumerate(reversed(logins), 1):
-            html += f'''
-                <tr>
-                    <td>{i}</td>
-                    <td><strong>{login['username']}</strong></td>
-                    <td>{login['timestamp']}</td>
-                    <td>{login['ip']}</td>
-                    <td>{login['user_agent'][:50]}...</td>
-                </tr>
-            '''
-        
-        html += '''
-            </table>
-            <p style="margin-top: 20px;">
-                <a href="/download-logs">📥 Download JSON</a> | 
-                <a href="/">🏠 Back to Login</a>
-            </p>
-        </body>
-        </html>
-        '''
-        return html
-    return "<h1>No logins yet</h1>"
-
-# ============ DOWNLOAD LOGS ============
-@app.route('/download-logs')
-def download_logs():
-    """Download logs as JSON file"""
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, 'r') as f:
-            data = f.read()
-        response = make_response(data)
-        response.headers['Content-Type'] = 'application/json'
-        response.headers['Content-Disposition'] = 'attachment; filename=math_ocr_logins.json'
-        return response
-    return "No logins yet", 404
-
-# ============ TEST LOGIN ============
-@app.route('/test-login-page')
-def test_login_page():
-    """Simple page to test login"""
-    return '''
-    <html><body style="padding: 40px;">
-    <h2>Test Login System</h2>
-    <input id="username" placeholder="Enter username" value="test_user">
-    <button onclick="login()">Test Login</button>
-    <div id="result" style="margin-top: 20px;"></div>
-    <script>
-    async function login() {
-        const username = document.getElementById('username').value;
-        const result = document.getElementById('result');
-        result.innerHTML = 'Logging in...';
-        
-        const response = await fetch('/api/login', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username: username})
-        });
-        
-        const data = await response.json();
-        if (data.success) {
-            result.innerHTML = `✅ Login successful!<br>
-                                User: ${data.user}<br>
-                                <a href="/view-logs">View All Logs</a>`;
-        } else {
-            result.innerHTML = `❌ Failed: ${data.message}`;
-        }
-    }
-    </script>
-    </body></html>
-    '''
-
-@app.route('/generate_practice', methods=['POST'])
-def generate_practice():
-    try:
-        api_key = os.getenv('OPENAI_API_KEY')
-        if not api_key:
-            return jsonify({'error': 'OpenAI API key not configured.'}), 500
-
-        data = request.json
-        if not data or 'analysis' not in data:
-            return jsonify({'error': 'No analysis data provided.'}), 400
-
-        analysis = data.get('analysis', {})
-        questions = analysis.get('questions', [])
-
-        if not questions:
-            return jsonify({'error': 'No questions found in analysis data.'}), 400
-
-        error_questions = [q for q in questions if 'no error' not in q.get('error', '').lower()]
-
-        if not error_questions:
-            return jsonify({'practice_questions': []})
-
-        client = OpenAI(api_key=api_key)
-
-        prompt = f"""
-        Generate practice questions for these problems where students made mistakes:
-
-        {json.dumps(error_questions, indent=2)}
-
-        CRITICAL INSTRUCTIONS:
-        1. Use the EXACT SAME question numbers as the original questions
-        2. Create MODIFIED versions of the questions (not identical, but similar concept)
-        3. Target the specific errors or concepts the student struggled with
-        4. Format ALL math using LaTeX: $x^2$, $\\frac{{a}}{{b}}$, $\\int$, etc.
-
-        Return a JSON array with this structure:
-        [{{"number": "exact_original_question_number", "question": "modified question with $LaTeX$ formatting targeting same concept"}}]
-        """
-
-        response = client.chat.completions.create(
-            model="gpt-5.1",
-            messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=2000,
-            temperature=0.7
-        )
-
-        result_text = response.choices[0].message.content.strip()
-
-        if result_text.startswith('```json'):
-            result_text = result_text[7:]
-        if result_text.endswith('```'):
-            result_text = result_text[:-3]
-        result_text = result_text.strip()
-
-        try:
-            practice_questions = json.loads(result_text)
-            return jsonify({'practice_questions': practice_questions})
-        except json.JSONDecodeError as e:
-            print(f"JSON decode error in generate_practice: {e}")
-            print(f"Problematic text: {result_text}")
-            return jsonify({'error': f'Failed to parse practice questions: {str(e)}'}), 500
-
-    except Exception as e:
-        print(f"Generate practice error: {str(e)}")
-        return jsonify({'error': f'An unexpected error occurred: {str(e)}'}), 500
 
 if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("🚀 Math OCR Analyzer Starting...")
     print("=" * 60)
     if not os.getenv('OPENAI_API_KEY'):
-        print("\n⚠️  WARNING: OpenAI API key not found!")
-        print("   Please set the OPENAI_API_KEY environment variable.\n")
+        print("\n⚠️ WARNING: OpenAI API key not found!")
+        print(" Please set the OPENAI_API_KEY environment variable.\n")
     else:
         print("\n✅ API Key configured")
     print("\n📱 Access the app at: http://localhost:5000")
