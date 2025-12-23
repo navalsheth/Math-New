@@ -1036,15 +1036,62 @@ MAIN_HTML = '''
         }
 
         async function downloadPracticePaper() {
-            const practicePaper = document.getElementById('practice-paper');
-            const pdf = new jsPDF('p', 'mm', 'a4');
-            const imgData = await html2canvas(practicePaper, { scale: 2 });
-            const imgWidth = pdf.internal.pageSize.getWidth();
-            const imgHeight = (imgData.height * imgWidth) / imgData.width;
+    const practicePaper = document.getElementById('practice-paper');
+    if (!practicePaper) {
+        alert('Practice paper not found!');
+        return;
+    }
 
-            pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
-            pdf.save('practice-paper.pdf');
-        }
+    // Show loading message
+    const loading = document.createElement('div');
+    loading.innerHTML = '<div class="loading"></div> Generating PDF...';
+    loading.style.position = 'fixed';
+    loading.style.top = '50%';
+    loading.style.left = '50%';
+    loading.style.transform = 'translate(-50%, -50%)';
+    loading.style.background = 'rgba(255,255,255,0.9)';
+    loading.style.padding = '20px';
+    loading.style.borderRadius = '10px';
+    loading.style.zIndex = '9999';
+    document.body.appendChild(loading);
+
+    try {
+        // Use html2canvas to capture the practice paper
+        const canvas = await html2canvas(practicePaper, {
+            scale: 2,                    // Higher resolution
+            useCORS: true,
+            logging: false,
+            backgroundColor: '#ffffff',
+            windowWidth: practicePaper.scrollWidth,
+            windowHeight: practicePaper.scrollHeight
+        });
+
+        // Access jsPDF correctly (UMD build puts it on window.jspdf)
+        const { jsPDF } = window.jspdf;  // This is the correct way in UMD builds
+
+        const pdf = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        });
+
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = pdf.internal.pageSize.getWidth();
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        // Add image (with proper scaling)
+        pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+
+        // Save with a nice filename
+        pdf.save(`Math_Practice_Paper_${new Date().toISOString().slice(0,10)}.pdf`);
+
+    } catch (error) {
+        console.error('PDF generation failed:', error);
+        alert('Failed to generate PDF. Please try again.');
+    } finally {
+        document.body.removeChild(loading);
+    }
+}
     </script>
 </body>
 </html>
